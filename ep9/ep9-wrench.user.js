@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         EP9 Wrench: speed + damage x2 + range x1.5
+// @name         EP9 Wrench: speed + range x1.5
 // @match        https://ep9-online.com/play/*
 // @run-at       document-start
 // @grant        none
@@ -35,39 +35,6 @@
         0x2658: 'beat?    len9, ~every 60s',
         0x00a1: 'beat2?   len21 all zero body, ~every 60s',
       },
-    },
-
-    // Damage output multiplier. Both mechanisms are gated: each needs values that
-    // come from the game, and none was supplied, so all are UNSET (null).
-    // Observed so far (user capture): outgoing frames 0x01c0 / 0x2394 contain ids
-    // and small constants, no value identified as damage. Where damage lives is
-    // unknown; use __wrench.ws.find(<on-screen damage number>) to look for it.
-    damage: {
-      multiplier: 2,
-      // Mechanism A, client-state field: window path to an object + the name of a
-      // numeric damage field on it. Multiplied from its captured base value.
-      playerPath: null,
-      damageField: null,
-      // Mechanism B, outgoing-packet field: the opcode (number, e.g. 0x2394), the
-      // byte offset FROM THE START OF THE FRAME (header is 8 bytes), and the type
-      // ('u16' | 'u32' | 'f32', little-endian). Multiplied in a copy before send.
-      packet: { opcode: null, offset: null, type: null },
-      // Mechanism C, INCOMING packet field (what the client receives and shows).
-      // Source: user capture. Typed damage 5053 = 0x13bd was found at frame offset
-      // 12 of inbound opcode 0x02ed (len 25: [id 0xb1][5053][0][0xb33f]), inside
-      // a message batched with a 0x0379 frame. That 0x02ed is a damage report is
-      // my reading of one hit, NOT confirmed. This changes what the client
-      // receives, not what the server computed.
-      // A list: one entry per inbound frame kind that carries a damage number.
-      //  - 0x02ed @12: 5053 (monster hit, user capture).
-      //  - 0x2555 @16: person hit, user typed 1459 = 0x05b3 and it sits at frame
-      //    offset 16 in 3 captures (len 34: [0xb33f][0x12716][1459][x][0x17a7][0x100]);
-      //    the field at @20 changes per hit (2903, 4596) and is NOT doubled.
-      // That these are damage reports is my reading of the matches, not confirmed.
-      incoming: [
-        { opcode: 0x02ed, offset: 12, type: 'u32' },
-        { opcode: 0x2555, offset: 16, type: 'u32' },
-      ],
     },
 
     // Skill attack range = 1.5x normal. Client-state field only (gated): window
@@ -231,27 +198,9 @@
       const rawSend = ws.send.bind(ws);
       ws.send = (data) => {
         record('out', url, data);
-        return rawSend(damage.patchOut(data));
+        return rawSend(data);
       };
       const nativeAdd = ws.addEventListener.bind(ws);
-      const nativeRemove = ws.removeEventListener.bind(ws);
-      const wrapped = new Map();   // page fn -> wrapped fn
-      const wrap = (fn) => {
-        if (typeof fn !== 'function') return fn;
-        if (!wrapped.has(fn)) wrapped.set(fn, function (ev) { return fn.call(this, damage.patchIn(ev)); });
-        return wrapped.get(fn);
-      };
-      ws.addEventListener = (type, fn, opts) => nativeAdd(type, type === 'message' ? wrap(fn) : fn, opts);
-      ws.removeEventListener = (type, fn, opts) => nativeRemove(type, type === 'message' && wrapped.has(fn) ? wrapped.get(fn) : fn, opts);
-      const omDesc = Object.getOwnPropertyDescriptor(orig.WebSocket.prototype, 'onmessage');
-      if (omDesc && omDesc.set) {
-        let pageOnMessage = null;
-        Object.defineProperty(ws, 'onmessage', {
-          configurable: true,
-          get: () => pageOnMessage,
-          set: (fn) => { pageOnMessage = fn; omDesc.set.call(ws, typeof fn === 'function' ? wrap(fn) : fn); },
-        });
-      }
       nativeAdd('message', (ev) => {
         const d = ev.data;
         if (d instanceof ArrayBuffer) record('in', url, d);
@@ -272,148 +221,6 @@
       note: s.dir === 'out' ? (CONFIG.protocol.opcodes[s.opcode] || 'unknown') : '',
     }))
     .sort((a, b) => b.count - a.count);
-
-  // ---------------------------------------------------------------------------
-  // Damage output multiplier. Fully gated on config (see CONFIG.damage).
-  //  A) client field: multiplies a numeric field on window[playerPath].
-  //  B) outgoing packet: multiplies one field of one opcode in a copy of the frame.
-  // ---------------------------------------------------------------------------
-  const damage = (() => {
-    let enabled = false;
-    let base = null;
-    let rafId = 0;
-    let patched = 0;
-
-    const fieldCfg = () => { const d = CONFIG.damage; return d.playerPath !== null && d.damageField !== null; };
-    const pktCfg = () => { const p = CONFIG.damage.packet; return p.opcode !== null && p.offset !== null && p.type !== null; };
-    const incList = () => (Array.isArray(CONFIG.damage.incoming) ? CONFIG.damage.incoming.filter((p) => p && p.opcode !== null && p.offset !== null && p.type !== null) : []);
-    const incCfg = () => incList().length > 0;
-    let incPatched = 0;
-    let incBlobSkipped = 0;
-    const SIZES = { u16: 2, u32: 4, f32: 4 };
-
-    const status = () => {
-      const d = CONFIG.damage;
-      if (!isFiniteNumber(d.multiplier) || d.multiplier <= 0) return 'bad multiplier';
-      if (!fieldCfg() && !pktCfg() && !incCfg()) return 'UNSET field/packet/incoming';
-      if (d.playerPath !== null && d.damageField !== null) {
-        const player = resolvePath(window, d.playerPath);
-        if (player === null || typeof player !== 'object') return 'playerPath does not resolve';
-        if (!isFiniteNumber(player[d.damageField])) return 'damageField not a finite number';
-      }
-      if (pktCfg() && !(d.packet.type in SIZES)) return 'packet.type invalid';
-      if (incList().some((p) => !(p.type in SIZES))) return 'incoming.type invalid';
-      return enabled ? 'ON' : 'ready';
-    };
-
-    const tick = () => {
-      rafId = orig.raf(tick);
-      if (!enabled || !fieldCfg()) return;
-      const d = CONFIG.damage;
-      const player = resolvePath(window, d.playerPath);
-      if (!player || !isFiniteNumber(player[d.damageField])) return;
-      if (base === null) base = player[d.damageField];
-      player[d.damageField] = base * d.multiplier;
-    };
-
-    const restore = () => {
-      const d = CONFIG.damage;
-      if (base !== null && d.playerPath !== null && d.damageField !== null) {
-        const player = resolvePath(window, d.playerPath);
-        if (player && typeof player === 'object') player[d.damageField] = base;
-      }
-      base = null;
-    };
-
-    const stop = () => {
-      enabled = false;
-      restore();
-      if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
-    };
-
-    const toggle = () => {
-      const s = status();
-      if (s === 'ON') { stop(); return 'OFF'; }
-      if (s !== 'ready') return s;
-      enabled = true;
-      patched = 0;
-      incPatched = 0;
-      incBlobSkipped = 0;
-      if (fieldCfg()) rafId = orig.raf(tick);
-      return 'ON';
-    };
-
-    // Called for every outgoing message. Returns the original data unless it is
-    // the configured opcode, in which case it returns a patched copy.
-    const patchOut = (data) => {
-      if (!enabled || !pktCfg()) return data;
-      const p = CONFIG.damage.packet;
-      const size = SIZES[p.type];
-      if (!size) return data;
-      const bytes = toBytes(data);
-      if (bytes === null) return data;
-      const f = parseFrame(bytes);
-      if (!f || f.opcode !== p.opcode) return data;
-      if (p.offset < 8 || p.offset + size > bytes.length) return data;
-      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-      const m = CONFIG.damage.multiplier;
-      if (p.type === 'f32') view.setFloat32(p.offset, view.getFloat32(p.offset, true) * m, true);
-      else if (p.type === 'u32') view.setUint32(p.offset, Math.min(0xffffffff, Math.round(view.getUint32(p.offset, true) * m)), true);
-      else view.setUint16(p.offset, Math.min(0xffff, Math.round(view.getUint16(p.offset, true) * m)), true);
-      patched += 1;
-      return bytes;
-    };
-
-    const mulAt = (view, offset, type) => {
-      const m = CONFIG.damage.multiplier;
-      if (type === 'f32') view.setFloat32(offset, view.getFloat32(offset, true) * m, true);
-      else if (type === 'u32') view.setUint32(offset, Math.min(0xffffffff, Math.round(view.getUint32(offset, true) * m)), true);
-      else view.setUint16(offset, Math.min(0xffff, Math.round(view.getUint16(offset, true) * m)), true);
-    };
-
-    // Wraps a page message handler so it receives the event with patched data.
-    // A message may hold several frames back to back, so each is walked by its
-    // length field. Only ArrayBuffer data is patched (Blob data is counted).
-    const patchIn = (ev) => {
-      if (!enabled || !incCfg()) return ev;
-      const d = ev.data;
-      if (typeof Blob !== 'undefined' && d instanceof Blob) { incBlobSkipped += 1; return ev; }
-      if (!(d instanceof ArrayBuffer)) return ev;
-      const targets = incList();
-      const buf = d.slice(0);
-      const view = new DataView(buf);
-      let hit = false;
-      for (let off = 0; off + 8 <= buf.byteLength;) {
-        const flen = view.getUint32(off, true);
-        if (flen < 8 || off + flen > buf.byteLength) break;
-        const op = view.getUint32(off + 4, true);
-        for (const p of targets) {
-          const size = SIZES[p.type];
-          if (size && op === p.opcode && p.offset >= 8 && p.offset + size <= flen) {
-            mulAt(view, off + p.offset, p.type);
-            incPatched += 1;
-            hit = true;
-          }
-        }
-        off += flen;
-      }
-      if (!hit) return ev;
-      return new Proxy(ev, {
-        get(t, k) {
-          if (k === 'data') return buf;
-          const v = Reflect.get(t, k, t);
-          return typeof v === 'function' ? v.bind(t) : v;
-        },
-      });
-    };
-
-    return {
-      status, toggle, stop, patchOut, patchIn,
-      get patched() { return patched; },
-      get incomingPatched() { return incPatched; },
-      get incomingBlobSkipped() { return incBlobSkipped; },
-    };
-  })();
 
   // Skill attack range multiplier (client-state field, gated on CONFIG.range).
   const range = (() => {
@@ -518,11 +325,11 @@
   };
 
   // ---------------------------------------------------------------------------
-  // HUD + hotkeys.  ]  faster   [  slower   \  1x   '  damage on/off   ;  range on/off
+  // HUD + hotkeys.  ]  faster   [  slower   \  1x    ;  range on/off
   // ---------------------------------------------------------------------------
   let hud = null;
   const render = () => {
-    if (hud) hud.textContent = `speed x${clock.scale} | damage x${CONFIG.damage.multiplier}: ${damage.status()} | range x${CONFIG.range.multiplier}: ${range.status()}`;
+    if (hud) hud.textContent = `speed x${clock.scale} | range x${CONFIG.range.multiplier}: ${range.status()}`;
   };
 
   const stepScale = (dir) => {
@@ -540,7 +347,6 @@
     if (e.key === ']') stepScale(+1);
     else if (e.key === '[') stepScale(-1);
     else if (e.key === '\\') { clock.setScale(1); render(); }
-    else if (e.key === "'") { damage.toggle(); render(); }
     else if (e.key === ';') { range.toggle(); render(); }
   }, true);
 
@@ -555,7 +361,6 @@
   window.__wrench = {
     CONFIG,
     setScale: (s) => { const ok = clock.setScale(s); render(); return ok; },
-    damage,
     range,
     ws: {
       dump: () => wsLog.slice(),
@@ -567,15 +372,4 @@
     parseFrame,
     resolvePath,
   };
-
-  // ---------------------------------------------------------------------------
-  // RECIPE to find where damage lives (nothing below is known yet):
-  //  1. __wrench.CONFIG.ws.previewBytes = 256; __wrench.ws.clear()
-  //  2. Hit something once and note the exact damage number on screen (N).
-  //  3. __wrench.ws.find(N). A hit on an 'in' frame means the server reports the
-  //     damage (client multiplication cannot change what the server computed). A
-  //     hit on an 'out' frame gives opcode + offset + type for CONFIG.damage.packet.
-  //  4. For a client-side number, give CONFIG.damage.playerPath/damageField from
-  //     the game bundle instead. Then ' toggles it; HUD shows the status.
-  // ---------------------------------------------------------------------------
 })();
