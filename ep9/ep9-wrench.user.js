@@ -58,7 +58,10 @@
       // a message batched with a 0x0379 frame. That 0x02ed is a damage report is
       // my reading of one hit, NOT confirmed. This changes what the client
       // receives, not what the server computed.
-      incoming: { opcode: 0x02ed, offset: 12, type: 'u32' },
+      // A list: one entry per inbound frame kind that carries a damage number.
+      // The person-hit capture showed a different frame (0x2555, len 34) with no
+      // damage offset identified yet, so only the 0x02ed entry is set.
+      incoming: [{ opcode: 0x02ed, offset: 12, type: 'u32' }],
     },
 
     // Skill attack range = 1.5x normal. Client-state field only (gated): window
@@ -277,7 +280,8 @@
 
     const fieldCfg = () => { const d = CONFIG.damage; return d.playerPath !== null && d.damageField !== null; };
     const pktCfg = () => { const p = CONFIG.damage.packet; return p.opcode !== null && p.offset !== null && p.type !== null; };
-    const incCfg = () => { const p = CONFIG.damage.incoming; return p.opcode !== null && p.offset !== null && p.type !== null; };
+    const incList = () => (Array.isArray(CONFIG.damage.incoming) ? CONFIG.damage.incoming.filter((p) => p && p.opcode !== null && p.offset !== null && p.type !== null) : []);
+    const incCfg = () => incList().length > 0;
     let incPatched = 0;
     let incBlobSkipped = 0;
     const SIZES = { u16: 2, u32: 4, f32: 4 };
@@ -292,7 +296,7 @@
         if (!isFiniteNumber(player[d.damageField])) return 'damageField not a finite number';
       }
       if (pktCfg() && !(d.packet.type in SIZES)) return 'packet.type invalid';
-      if (incCfg() && !(d.incoming.type in SIZES)) return 'incoming.type invalid';
+      if (incList().some((p) => !(p.type in SIZES))) return 'incoming.type invalid';
       return enabled ? 'ON' : 'ready';
     };
 
@@ -369,19 +373,21 @@
       const d = ev.data;
       if (typeof Blob !== 'undefined' && d instanceof Blob) { incBlobSkipped += 1; return ev; }
       if (!(d instanceof ArrayBuffer)) return ev;
-      const p = CONFIG.damage.incoming;
-      const size = SIZES[p.type];
-      if (!size) return ev;
+      const targets = incList();
       const buf = d.slice(0);
       const view = new DataView(buf);
       let hit = false;
       for (let off = 0; off + 8 <= buf.byteLength;) {
         const flen = view.getUint32(off, true);
         if (flen < 8 || off + flen > buf.byteLength) break;
-        if (view.getUint32(off + 4, true) === p.opcode && p.offset >= 8 && p.offset + size <= flen) {
-          mulAt(view, off + p.offset, p.type);
-          incPatched += 1;
-          hit = true;
+        const op = view.getUint32(off + 4, true);
+        for (const p of targets) {
+          const size = SIZES[p.type];
+          if (size && op === p.opcode && p.offset >= 8 && p.offset + size <= flen) {
+            mulAt(view, off + p.offset, p.type);
+            incPatched += 1;
+            hit = true;
+          }
         }
         off += flen;
       }
