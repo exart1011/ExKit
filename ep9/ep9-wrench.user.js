@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         EP9 Wrench: speed + attack speed
+// @name         EP9 Wrench: speed + damage x2 + range x1.5
 // @match        https://ep9-online.com/play/*
 // @run-at       document-start
 // @grant        none
@@ -37,27 +37,27 @@
       },
     },
 
-    attack: {
-      // Dotted path from window to the local player object. UNSET (this is a
-      // canvas game with a binary protocol; a JS-side path was not shown to me).
+    // Damage output multiplier. Both mechanisms are gated: each needs values that
+    // come from the game, and none was supplied, so all are UNSET (null).
+    // Observed so far (user capture): outgoing frames 0x01c0 / 0x2394 contain ids
+    // and small constants, no value identified as damage. Where damage lives is
+    // unknown; use __wrench.ws.find(<on-screen damage number>) to look for it.
+    damage: {
+      multiplier: 2,
+      // Mechanism A, client-state field: window path to an object + the name of a
+      // numeric damage field on it. Multiplied from its captured base value.
       playerPath: null,
-      cooldownField: null,
-      intervalField: null,
-      intervalDivisor: 2,
+      damageField: null,
+      // Mechanism B, outgoing-packet field: the opcode (number, e.g. 0x2394), the
+      // byte offset FROM THE START OF THE FRAME (header is 8 bytes), and the type
+      // ('u16' | 'u32' | 'f32', little-endian). Multiplied in a copy before send.
+      packet: { opcode: null, offset: null, type: null },
     },
 
-    replay: {
-      // Opcodes of the frames to resend, in order, as one burst per tick (a
-      // single skill-1 right-click was captured as the burst 0x2700, 0x01c0,
-      // 0x2394 within ~20 ms). UNSET (null): which of them the server treats as
-      // the cast is unknown. Suggested first test, not a result: [0x2394], then
-      // add 0x01c0 / 0x2700 if the server ignores it. Example: [0x2394]
-      opcodes: null,
-      // Resend interval in real milliseconds. UNSET.
-      intervalMs: null,
-      minIntervalMs: 20,   // my floor, not game data
-      maxCount: 500,       // my bound per start
-    },
+    // Skill attack range = 1.5x normal. Client-state field only (gated): window
+    // path to an object + numeric range field. Both UNSET: no range field was
+    // identified in any capture or file I have seen.
+    range: { multiplier: 1.5, playerPath: null, rangeField: null },
 
     ws: { logCap: 500, previewBytes: 32, gapCap: 200 },
   };
@@ -169,12 +169,10 @@
   // (reload with the scale already chosen) or the timer rate will not follow.
 
   // ---------------------------------------------------------------------------
-  // WebSocket capture: outgoing + incoming frames, per-opcode timing, and the
-  // last outgoing frame per opcode (with its socket) for the replay module.
+  // WebSocket capture: outgoing + incoming frames and per-opcode timing.
   // ---------------------------------------------------------------------------
   const wsLog = [];
   const stats = new Map();          // "dir:opcode" -> { dir, opcode, count, lastT, gaps[] }
-  const lastOut = new Map();        // opcode -> { socket, rawSend, bytes }
 
   const pushLog = (entry) => {
     wsLog.push(entry);
@@ -216,9 +214,8 @@
       const url = String(args[0]);
       const rawSend = ws.send.bind(ws);
       ws.send = (data) => {
-        const r = record('out', url, data);
-        if (r && r.opcode !== null) lastOut.set(r.opcode, { socket: ws, rawSend, bytes: r.bytes, url });
-        return rawSend(data);
+        record('out', url, data);
+        return rawSend(damage.patchOut(data));
       };
       ws.addEventListener('message', (ev) => {
         const d = ev.data;
@@ -242,123 +239,127 @@
     .sort((a, b) => b.count - a.count);
 
   // ---------------------------------------------------------------------------
-  // Replay: resend the last captured outgoing frame of each CONFIG.replay.opcodes entry at a
-  // fixed real-time interval. Gated on config; stops on window blur, socket
-  // close, count limit or stop(). The frame is sent byte-for-byte as captured,
-  // so anything inside it (position, target id) is as stale as the capture.
+  // Damage output multiplier. Fully gated on config (see CONFIG.damage).
+  //  A) client field: multiplies a numeric field on window[playerPath].
+  //  B) outgoing packet: multiplies one field of one opcode in a copy of the frame.
   // ---------------------------------------------------------------------------
-  const replay = (() => {
-    let timer = 0;
-    let sent = 0;
-
-    const status = () => {
-      const r = CONFIG.replay;
-      const base = burstStatus();
-      if (base !== 'ready') return base;
-      if (r.intervalMs === null) return 'UNSET intervalMs';
-      if (!isFiniteNumber(r.intervalMs) || r.intervalMs < r.minIntervalMs) return 'intervalMs below floor';
-      return timer ? 'ON' : 'ready';
-    };
-
-    // Checks everything except the interval, so once() works without one.
-    const burstStatus = () => {
-      const r = CONFIG.replay;
-      if (!Array.isArray(r.opcodes) || r.opcodes.length === 0) return 'UNSET opcodes';
-      for (const op of r.opcodes) {
-        const cap = lastOut.get(op);
-        if (!cap) return 'no captured frame for 0x' + op.toString(16) + ' yet';
-        if (cap.socket.readyState !== 1) return 'socket not open';
-      }
-      return 'ready';
-    };
-
-    // Send the last captured frame of each configured opcode, byte-for-byte, in order.
-    const sendBurst = () => {
-      for (const op of CONFIG.replay.opcodes) {
-        const cap = lastOut.get(op);
-        if (!cap || cap.socket.readyState !== 1) return false;
-        cap.rawSend(cap.bytes.slice());
-        // rawSend bypasses the ws.send hook, so log replays here (replayed:true).
-        pushLog({
-          t: Math.round(orig.perfNow()), dir: 'out', url: cap.url, kind: 'bin', size: cap.bytes.length,
-          opcode: '0x' + op.toString(16).padStart(4, '0'), framed: true, replayed: true,
-          preview: toHex(cap.bytes.subarray(0, CONFIG.ws.previewBytes)),
-        });
-      }
-      return true;
-    };
-
-    // One manual test shot, no timer: use this first to see if the server reacts.
-    const once = () => {
-      const s = burstStatus();
-      return s === 'ready' ? (sendBurst() ? 'sent' : 'failed') : s;
-    };
-
-    const stop = () => {
-      if (timer) { orig.clearInterval(timer); timer = 0; }
-      sent = 0;
-    };
-
-    const start = () => {
-      const s = status();
-      if (s !== 'ready') return s;
-      const r = CONFIG.replay;
-      timer = orig.setInterval(() => {
-        if (sent >= r.maxCount || !sendBurst()) { stop(); return; }
-        sent += 1;
-      }, r.intervalMs);
-      return 'ON';
-    };
-
-    window.addEventListener('blur', stop);
-    return { status, once, start, stop, toggle: () => (timer ? (stop(), 'OFF') : start()) };
-  })();
-
-  // ---------------------------------------------------------------------------
-  // Attack speed module (client-state fields). Fully gated on config.
-  // ---------------------------------------------------------------------------
-  const attack = (() => {
+  const damage = (() => {
     let enabled = false;
-    let baseInterval = null;
+    let base = null;
     let rafId = 0;
+    let patched = 0;
+
+    const fieldCfg = () => { const d = CONFIG.damage; return d.playerPath !== null && d.damageField !== null; };
+    const pktCfg = () => { const p = CONFIG.damage.packet; return p.opcode !== null && p.offset !== null && p.type !== null; };
+    const SIZES = { u16: 2, u32: 4, f32: 4 };
 
     const status = () => {
-      const a = CONFIG.attack;
-      if (a.playerPath === null) return 'UNSET playerPath';
-      if (a.cooldownField === null && a.intervalField === null) return 'UNSET cooldownField/intervalField';
-      const player = resolvePath(window, a.playerPath);
-      if (player === null || typeof player !== 'object') return 'playerPath does not resolve';
-      if (a.cooldownField !== null && !isFiniteNumber(player[a.cooldownField])) return 'cooldownField not a finite number';
-      if (a.intervalField !== null && !isFiniteNumber(player[a.intervalField])) return 'intervalField not a finite number';
+      const d = CONFIG.damage;
+      if (!isFiniteNumber(d.multiplier) || d.multiplier <= 0) return 'bad multiplier';
+      if (!fieldCfg() && !pktCfg()) return 'UNSET field/packet';
+      if (d.playerPath !== null && d.damageField !== null) {
+        const player = resolvePath(window, d.playerPath);
+        if (player === null || typeof player !== 'object') return 'playerPath does not resolve';
+        if (!isFiniteNumber(player[d.damageField])) return 'damageField not a finite number';
+      }
+      if (pktCfg() && !(d.packet.type in SIZES)) return 'packet.type invalid';
       return enabled ? 'ON' : 'ready';
     };
 
     const tick = () => {
       rafId = orig.raf(tick);
-      const s = status();
-      if (s !== 'ON') { if (s !== 'ready') stop(); return; }
-      const a = CONFIG.attack;
-      const player = resolvePath(window, a.playerPath);
-      if (a.cooldownField !== null) player[a.cooldownField] = 0;
-      if (a.intervalField !== null) {
-        if (baseInterval === null) baseInterval = player[a.intervalField];
-        player[a.intervalField] = baseInterval / a.intervalDivisor;
+      if (!enabled || !fieldCfg()) return;
+      const d = CONFIG.damage;
+      const player = resolvePath(window, d.playerPath);
+      if (!player || !isFiniteNumber(player[d.damageField])) return;
+      if (base === null) base = player[d.damageField];
+      player[d.damageField] = base * d.multiplier;
+    };
+
+    const restore = () => {
+      const d = CONFIG.damage;
+      if (base !== null && d.playerPath !== null && d.damageField !== null) {
+        const player = resolvePath(window, d.playerPath);
+        if (player && typeof player === 'object') player[d.damageField] = base;
       }
+      base = null;
     };
 
     const stop = () => {
       enabled = false;
-      const a = CONFIG.attack;
-      const player = a.playerPath === null ? null : resolvePath(window, a.playerPath);
-      if (player && a.intervalField !== null && baseInterval !== null) player[a.intervalField] = baseInterval;
-      baseInterval = null;
+      restore();
       if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
     };
 
     const toggle = () => {
       const s = status();
-      if (s.startsWith('UNSET') || s.includes('not') || s.includes('does not')) return s;
-      if (enabled) { stop(); return 'OFF'; }
+      if (s === 'ON') { stop(); return 'OFF'; }
+      if (s !== 'ready') return s;
+      enabled = true;
+      patched = 0;
+      if (fieldCfg()) rafId = orig.raf(tick);
+      return 'ON';
+    };
+
+    // Called for every outgoing message. Returns the original data unless it is
+    // the configured opcode, in which case it returns a patched copy.
+    const patchOut = (data) => {
+      if (!enabled || !pktCfg()) return data;
+      const p = CONFIG.damage.packet;
+      const size = SIZES[p.type];
+      if (!size) return data;
+      const bytes = toBytes(data);
+      if (bytes === null) return data;
+      const f = parseFrame(bytes);
+      if (!f || f.opcode !== p.opcode) return data;
+      if (p.offset < 8 || p.offset + size > bytes.length) return data;
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      const m = CONFIG.damage.multiplier;
+      if (p.type === 'f32') view.setFloat32(p.offset, view.getFloat32(p.offset, true) * m, true);
+      else if (p.type === 'u32') view.setUint32(p.offset, Math.min(0xffffffff, Math.round(view.getUint32(p.offset, true) * m)), true);
+      else view.setUint16(p.offset, Math.min(0xffff, Math.round(view.getUint16(p.offset, true) * m)), true);
+      patched += 1;
+      return bytes;
+    };
+
+    return { status, toggle, stop, patchOut, get patched() { return patched; } };
+  })();
+
+  // Skill attack range multiplier (client-state field, gated on CONFIG.range).
+  const range = (() => {
+    let enabled = false;
+    let base = null;
+    let rafId = 0;
+    const cfgSet = () => CONFIG.range.playerPath !== null && CONFIG.range.rangeField !== null;
+    const target = () => (cfgSet() ? resolvePath(window, CONFIG.range.playerPath) : undefined);
+
+    const status = () => {
+      const r = CONFIG.range;
+      if (!isFiniteNumber(r.multiplier) || r.multiplier <= 0) return 'bad multiplier';
+      if (!cfgSet()) return 'UNSET playerPath/rangeField';
+      const o = target();
+      if (o === null || typeof o !== 'object') return 'playerPath does not resolve';
+      if (!isFiniteNumber(o[r.rangeField])) return 'rangeField not a finite number';
+      return enabled ? 'ON' : 'ready';
+    };
+    const tick = () => {
+      rafId = orig.raf(tick);
+      const o = target();
+      if (!enabled || !o || !isFiniteNumber(o[CONFIG.range.rangeField])) return;
+      if (base === null) base = o[CONFIG.range.rangeField];
+      o[CONFIG.range.rangeField] = base * CONFIG.range.multiplier;
+    };
+    const stop = () => {
+      enabled = false;
+      const o = target();
+      if (base !== null && o && typeof o === 'object') o[CONFIG.range.rangeField] = base;
+      base = null;
+      if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+    };
+    const toggle = () => {
+      const st = status();
+      if (st === 'ON') { stop(); return 'OFF'; }
+      if (st !== 'ready') return st;
       enabled = true;
       rafId = orig.raf(tick);
       return 'ON';
@@ -366,12 +367,33 @@
     return { status, toggle, stop };
   })();
 
+  // Search logged frame previews for a number (e.g. the damage you saw on
+  // screen) as u16 / u32 / f32 little-endian at every byte offset. Raise
+  // CONFIG.ws.previewBytes first (e.g. 256) so previews hold whole frames.
+  const find = (value) => {
+    const hits = [];
+    for (const e of wsLog) {
+      if (!e.preview) continue;
+      const bytes = Uint8Array.from(e.preview.split(' '), (h) => parseInt(h, 16));
+      const dv = new DataView(bytes.buffer);
+      for (let o = 0; o + 2 <= bytes.length; o++) {
+        const add = (type) => hits.push({ t: e.t, dir: e.dir, opcode: e.opcode, offset: o, type });
+        if (dv.getUint16(o, true) === value) add('u16');
+        if (o + 4 <= bytes.length) {
+          if (dv.getUint32(o, true) === value) add('u32');
+          if (Math.abs(dv.getFloat32(o, true) - value) < 1e-3) add('f32');
+        }
+      }
+    }
+    return hits;
+  };
+
   // ---------------------------------------------------------------------------
-  // HUD + hotkeys.  ]  faster   [  slower   \  1x   '  field attack   ;  packet replay
+  // HUD + hotkeys.  ]  faster   [  slower   \  1x   '  damage on/off   ;  range on/off
   // ---------------------------------------------------------------------------
   let hud = null;
   const render = () => {
-    if (hud) hud.textContent = `speed x${clock.scale} | field-attack: ${attack.status()} | replay: ${replay.status()}`;
+    if (hud) hud.textContent = `speed x${clock.scale} | damage x${CONFIG.damage.multiplier}: ${damage.status()} | range x${CONFIG.range.multiplier}: ${range.status()}`;
   };
 
   const stepScale = (dir) => {
@@ -389,8 +411,8 @@
     if (e.key === ']') stepScale(+1);
     else if (e.key === '[') stepScale(-1);
     else if (e.key === '\\') { clock.setScale(1); render(); }
-    else if (e.key === "'") { attack.toggle(); render(); }
-    else if (e.key === ';') { replay.toggle(); render(); }
+    else if (e.key === "'") { damage.toggle(); render(); }
+    else if (e.key === ';') { range.toggle(); render(); }
   }, true);
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -404,27 +426,26 @@
   window.__wrench = {
     CONFIG,
     setScale: (s) => { const ok = clock.setScale(s); render(); return ok; },
-    attack,
-    replay,
+    damage,
+    range,
     ws: {
       dump: () => wsLog.slice(),
       clear: () => { wsLog.length = 0; stats.clear(); },
       stats: wsStats,
+      find,
     },
     parseFrame,
     resolvePath,
   };
 
   // ---------------------------------------------------------------------------
-  // RECIPE to finish attack speed:
-  //  1. __wrench.ws.clear(), then do ONE action repeatedly (e.g. only basic
-  //     attacks, or only skill key 1) for ~10 uses, then run
-  //     console.table(__wrench.ws.stats()). The opcode whose count tracks your
-  //     uses (and is not 0x019c movement or a heartbeat) is the attack/cast.
-  //  2. Put that opcode in CONFIG.replay.opcodes ([0x2394] etc.) and a real-time interval in
-  //     CONFIG.replay.intervalMs, then use ';' to toggle. Watch the 'in' rows
-  //     in __wrench.ws.dump() for the server's reaction (accept vs. ignore).
-  //  3. If the server ignores faster casts, attack speed is enforced
-  //     server-side and only the cast rate it allows can be reached.
+  // RECIPE to find where damage lives (nothing below is known yet):
+  //  1. __wrench.CONFIG.ws.previewBytes = 256; __wrench.ws.clear()
+  //  2. Hit something once and note the exact damage number on screen (N).
+  //  3. __wrench.ws.find(N). A hit on an 'in' frame means the server reports the
+  //     damage (client multiplication cannot change what the server computed). A
+  //     hit on an 'out' frame gives opcode + offset + type for CONFIG.damage.packet.
+  //  4. For a client-side number, give CONFIG.damage.playerPath/damageField from
+  //     the game bundle instead. Then ' toggles it; HUD shows the status.
   // ---------------------------------------------------------------------------
 })();
