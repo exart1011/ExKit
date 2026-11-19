@@ -12,7 +12,7 @@
   --bg:#f6f4f1; --card:#ffffff; --ink:#1e2126; --soft:#5d636b; --line:#e3dfd8; --chip:#efece6;
   --accent:#a83c64; --accent-bg:#f9ebf1; --accent-ink:#ffffff;
   --ok:#21794a; --ok-bg:#e6f4ec; --bad:#b3362c; --bad-bg:#fbe9e7; --warn:#8a6512; --warn-bg:#f8f0dc;
-  --ob:#2f6f8f; --gy:#7a4fa3; --x:#8a6d1d;
+  --ob:#2f6f8f; --gy:#7a4fa3; --x:#8a6d1d; --cl:#1d6b73; --cl-bg:#e7f3f3;
   --f-body:Sarabun,"Noto Sans Thai","Leelawadee UI",Tahoma,system-ui,sans-serif;
   --f-head:"IBM Plex Sans Thai",Sarabun,"Noto Sans Thai",system-ui,sans-serif;
   --r:14px;
@@ -21,12 +21,12 @@
   --bg:#141619; --card:#1d2024; --ink:#ebe8e3; --soft:#a4a9b0; --line:#2f3338; --chip:#262a2f;
   --accent:#ec8db0; --accent-bg:#3a2430; --accent-ink:#1d1418;
   --ok:#7fd39f; --ok-bg:#183223; --bad:#f19a90; --bad-bg:#3a1f1c; --warn:#e2c372; --warn-bg:#33291a;
-  --ob:#86bfdc; --gy:#c6a6e6; --x:#d9bd6c; color-scheme:dark}}
+  --ob:#86bfdc; --gy:#c6a6e6; --x:#d9bd6c; --cl:#7fcbd2; --cl-bg:#18292b; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#141619; --card:#1d2024; --ink:#ebe8e3; --soft:#a4a9b0; --line:#2f3338; --chip:#262a2f;
   --accent:#ec8db0; --accent-bg:#3a2430; --accent-ink:#1d1418;
   --ok:#7fd39f; --ok-bg:#183223; --bad:#f19a90; --bad-bg:#3a1f1c; --warn:#e2c372; --warn-bg:#33291a;
-  --ob:#86bfdc; --gy:#c6a6e6; --x:#d9bd6c; color-scheme:dark}
+  --ob:#86bfdc; --gy:#c6a6e6; --x:#d9bd6c; --cl:#7fcbd2; --cl-bg:#18292b; color-scheme:dark}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 html,body{background:var(--bg)}
@@ -120,6 +120,15 @@ h1,h2,h3{font-family:var(--f-head);text-wrap:balance;margin:0}
 .ans .a:first-of-type{border-top:0}
 .ans .f{font-size:13px;color:var(--soft);white-space:nowrap}
 .ans .src{margin-top:8px;font-size:13px;color:var(--soft)}
+.cl{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;padding:1px 7px;border-radius:999px;background:var(--cl);color:var(--card);vertical-align:2px}
+.full{margin:-6px 0 16px;padding:10px 14px;border-radius:12px;background:var(--cl-bg);font-size:16px;line-height:1.55;overflow-wrap:anywhere}
+.full b{color:var(--cl);font-weight:600}
+.cbox{margin-top:12px;border-radius:var(--r);background:var(--cl-bg);padding:14px 16px}
+.cbox h3{font-size:14px;color:var(--cl);font-weight:700;margin-bottom:6px;display:flex;gap:8px;align-items:center}
+.cbox p{margin:0;overflow-wrap:anywhere}
+.cbox .disc{margin-top:8px;font-size:12.5px;color:var(--soft)}
+.ch .tx .cl{margin-left:6px}
+.tag.c{background:var(--cl-bg);color:var(--cl);font-weight:600}
 .self{display:flex;gap:10px;margin-top:12px}
 .self .btn{flex:1;justify-content:center}
 .self .btn.y[aria-pressed="true"]{background:var(--ok);border-color:var(--ok);color:var(--card)}
@@ -155,14 +164,14 @@ const WK={1:'สัปดาห์ที่ 1 · 19–22 ต.ค.',2:'สัป�
 const KEY='obgyn-quiz-v1';
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let DATA=null, Q={}, P={}, S={rep:false,mcq:false}, sess=null, resetArm=false;
+let DATA=null, Q={}, P={}, S={rep:false,mcq:false,cl:true}, sess=null, resetArm=false;
 
 function load(){try{const o=JSON.parse(localStorage.getItem(KEY)||'{}');P=o.p||{};Object.assign(S,o.s||{});}catch(e){}}
-function save(){try{localStorage.setItem(KEY,JSON.stringify({p:P,s:{rep:S.rep,mcq:S.mcq}}))}catch(e){}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify({p:P,s:{rep:S.rep,mcq:S.mcq,cl:S.cl}}))}catch(e){}}
 
 fetch('data.json').then(r=>r.json()).then(d=>{
   DATA=d;
-  d.L.forEach(l=>l.q.forEach((q,i)=>{q.id=l.c+'-'+i;q.L=l;q.i=i;q.kind=q.o?(q.k&&q.k.length?'mcq':'mcqn'):'open';Q[q.id]=q;}));
+  d.L.forEach(l=>l.q.forEach((q,i)=>{q.id=l.c+'-'+i;q.L=l;q.i=i;q.ck=(q.c&&q.c.k)?q.c.k.split(''):[];if(q.o&&!(q.k&&q.k.length)&&q.ck.length){q.k=q.ck.slice();q.byC=true;}q.dis=!q.byC&&q.k&&q.k.length&&q.ck.length&&!q.ck.some(x=>q.k.includes(x));q.kind=q.o?(q.k&&q.k.length?'mcq':'mcqn'):'open';Q[q.id]=q;}));
   load();renderHome();
 }).catch(()=>{$('#home').innerHTML='<p class="empty">โหลดข้อสอบไม่สำเร็จ ลองรีเฟรชหน้าอีกครั้ง</p>'});
 
@@ -183,6 +192,7 @@ function renderHome(){
   <div class="opts">
    <button class="sw" id="tRep" aria-pressed="${S.rep}">เฉพาะข้อที่ออกซ้ำ</button>
    <button class="sw" id="tMcq" aria-pressed="${S.mcq}">เฉพาะข้อที่มีตัวเลือก</button>
+   <button class="sw" id="tCl" aria-pressed="${S.cl}">แสดงความเห็นจาก Claude</button>
   </div>
   <form class="search" id="fs"><input type="search" id="qs" placeholder="ค้นหา เช่น placenta previa, MgSO4, Pap" autocomplete="off"><button class="btn" type="submit">ทำข้อที่ค้นเจอ</button></form>`;
   let cur=0;
@@ -196,6 +206,7 @@ function renderHome(){
   });
   if(cur)h+='</div>';
   h+=`<div class="foot"><p>เฉลยมาจากที่วง ไฮไลต์ หรือจดโน้ตไว้ในไฟล์ข้อสอบเก่า ไม่ใช่เฉลยทางการ ถ้าแต่ละไฟล์ตอบไม่ตรงกัน แอปจะนับถูกทุกคำตอบที่มีไฟล์เลือก และแสดงโน้ตของทุกไฟล์ให้อ่านประกอบ ข้อที่ไม่มีตัวเลือกให้นึกคำตอบก่อน แล้วกดดูเฉลยและให้คะแนนตัวเอง</p>
+  <p>กล่องสีเขียวอมฟ้าที่มีป้าย Claude คือความเห็นที่ Claude เขียนเพิ่ม ได้แก่ คำตอบเป็นประโยคเต็มพร้อมเหตุผล และโจทย์ฉบับเต็มสำหรับข้อที่รุ่นพี่จำมาไม่ครบ ไม่ใช่เฉลยทางการ ถ้า Claude เห็นต่างจากไฟล์ จะมีป้ายบอกไว้ ข้อที่ไฟล์ไม่มีเฉลยจะใช้คำตอบของ Claude ตรวจแทน</p>
   <details><summary>รายชื่อไฟล์ต้นทาง</summary><ul>${Object.entries(DATA.SRC).map(([k,v])=>`<li><b>${k}</b> ${esc(v)}</li>`).join('')}</ul></details>
   <div class="confirm" id="rs"><button class="linkbtn" id="bReset">ล้างประวัติการทำข้อสอบทั้งหมด</button></div>
   <p>ประวัติการทำข้อสอบเก็บไว้ในเบราว์เซอร์ของเครื่องนี้เท่านั้น</p></div>`;
@@ -205,8 +216,9 @@ function renderHome(){
   $('#bNew').onclick=()=>start(all.filter(q=>pass(q)&&!P[q.id]),'ข้อที่ยังไม่ได้ทำ');
   $('#tRep').onclick=()=>{S.rep=!S.rep;save();renderHome()};
   $('#tMcq').onclick=()=>{S.mcq=!S.mcq;save();renderHome()};
+  $('#tCl').onclick=()=>{S.cl=!S.cl;save();renderHome()};
   $('#fs').onsubmit=e=>{e.preventDefault();const t=$('#qs').value.trim().toLowerCase();if(!t)return;
-    const r=all.filter(q=>pass(q)&&(q.s+' '+(q.o||[]).map(o=>o[1]).join(' ')+' '+(q.raw||[]).join(' ')+' '+q.a.map(a=>a[0]).join(' ')).toLowerCase().includes(t));
+    const r=all.filter(q=>pass(q)&&(q.s+' '+(q.o||[]).map(o=>o[1]).join(' ')+' '+(q.raw||[]).join(' ')+' '+q.a.map(a=>a[0]).join(' ')+' '+(q.c?q.c.q+' '+q.c.s:'')).toLowerCase().includes(t));
     start(r,'ค้นหา “'+t+'”');};
   $('#bReset').onclick=()=>{$('#rs').innerHTML='<span>ล้างประวัติทั้งหมดจริงไหม</span><button class="btn" id="rsY">ล้างเลย</button><button class="btn" id="rsN">ยกเลิก</button>';
     $('#rsY').onclick=()=>{P={};save();renderHome()};$('#rsN').onclick=renderHome;};
@@ -244,8 +256,10 @@ function renderQ(){
   if(q.r)tags.push('<span class="tag">recall</span>');
   if(q.kind==='mcq'&&q.k.length>1)tags.push('<span class="tag w">ไฟล์เฉลยไม่ตรงกัน</span>');
   if(q.kind==='mcqn')tags.push('<span class="tag w">ไฟล์ไม่ได้ระบุคำตอบชัด</span>');
+  if(q.byC)tags.push('<span class="tag c">ไฟล์ไม่มีเฉลย ใช้คำตอบของ Claude</span>');
+  if(q.dis&&S.cl)tags.push('<span class="tag c">Claude เห็นต่างจากไฟล์</span>');
   h+=`<div class="card"><div class="qno num">ข้อ ${sess.i+1} จาก ${n} · ${esc(q.L.t)} ข้อ ${q.i+1}</div>${tags.length?`<div class="tags">${tags.join('')}</div>`:''}
-  <p class="stem">${esc(q.s)}</p>`;
+  <p class="stem">${esc(q.s)}</p>${S.cl&&q.c&&q.c.q?`<div class="full"><span class="cl">Claude</span> <b>โจทย์ฉบับเต็ม:</b> ${esc(q.c.q)}</div>`:''}`;
   if(q.o){
     h+='<div class="choices">';
     const shownO=r||sess.show,pick=r?r.k:sess.pick;
@@ -256,7 +270,7 @@ function renderQ(){
           if(q.k.includes(k)){c='ok';mk='✓'}else if(pick===k){c='bad';mk='✕'}else c='dim';
         }else if(pick===k){c='pick';mk='•'}
       }
-      h+=`<button class="ch ${c}" data-k="${k}" ${shownO?'disabled':''}><span class="k">${esc(d.toUpperCase())}</span><span class="tx">${esc(t)}</span><span class="mk">${mk}</span></button>`;
+      h+=`<button class="ch ${c}" data-k="${k}" ${shownO?'disabled':''}><span class="k">${esc(d.toUpperCase())}</span><span class="tx">${esc(t)}${shownO&&(S.cl||q.byC)&&q.ck.includes(k)?'<span class="cl">Claude</span>':''}</span><span class="mk">${mk}</span></button>`;
     });
     h+='</div>';
   }else{
@@ -265,10 +279,11 @@ function renderQ(){
   }
   const shown=r||sess.show;
   if(shown){
-    if(q.kind==='mcq')h+=r.c?'<div class="verdict ok">✓ ตอบถูก</div>':'<div class="verdict bad">✕ ยังไม่ถูก</div>';
+    if(q.kind==='mcq')h+=r.c?'<div class="verdict ok">✓ ตอบถูก'+(q.byC?' (ตามเฉลยของ Claude)':'')+'</div>':'<div class="verdict bad">✕ ยังไม่ถูก</div>';
     else if(q.kind==='mcqn')h+='<div class="verdict n">ไฟล์ไม่ได้ระบุคำตอบชัด อ่านโน้ตแล้วให้คะแนนตัวเอง</div>';
     h+=`<div class="ans"><h3>เฉลยจากไฟล์</h3>${q.a.length?q.a.map(a=>`<div class="a">${esc(a[0])} <span class="f">${esc(a[1])}</span></div>`).join(''):'<div class="a muted">ไฟล์ไม่ได้ระบุคำตอบ</div>'}
     <div class="src">ที่มา: ${esc(q.src)}</div></div>`;
+    if(q.c&&(S.cl||q.byC))h+=`<div class="cbox"><h3><span class="cl">Claude</span> ความเห็นจาก Claude</h3><p>${esc(q.c.s)}</p><div class="disc">เป็นความเห็นของ Claude ไม่ใช่เฉลยทางการ อาจผิดได้ ควรเช็กกับ lecture และตำราอีกครั้ง</div></div>`;
     if(q.kind!=='mcq')h+=`<div class="self"><button class="btn y" id="bY" aria-pressed="${!!(r&&r.c)}">ฉันตอบถูก</button><button class="btn n" id="bN" aria-pressed="${!!(r&&!r.c)}">ฉันตอบผิด</button></div>`;
   }
   h+='</div>';
