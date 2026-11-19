@@ -457,6 +457,45 @@
     return { status, toggle, stop };
   })();
 
+  // Walk own data properties of window (cycle-safe, bounded) and list the paths
+  // whose numeric value equals `value`. Accessors are not invoked, DOM nodes and
+  // typed arrays are skipped. Use it with a number the game shows you (e.g. a
+  // skill's range). A hit is a lead, not proof of what the field is. If the game
+  // keeps its state in closures, nothing under window will match.
+  const scan = (value, opts = {}) => {
+    const maxDepth = opts.maxDepth === undefined ? 4 : opts.maxDepth;
+    const maxNodes = opts.maxNodes === undefined ? 30000 : opts.maxNodes;
+    const eps = opts.eps === undefined ? 1e-6 : opts.eps;
+    const seen = new WeakSet();
+    const hits = [];
+    let nodes = 0;
+    const walk = (obj, path, depth) => {
+      if (depth > maxDepth) return;
+      let keys;
+      try { keys = Object.getOwnPropertyNames(obj); } catch (e) { return; }
+      for (const k of keys) {
+        if (nodes >= maxNodes) return;
+        nodes += 1;
+        if (depth === 0 && k === '__wrench') continue;
+        let d;
+        try { d = Object.getOwnPropertyDescriptor(obj, k); } catch (e) { continue; }
+        if (!d || !('value' in d)) continue;
+        const v = d.value;
+        const p = path ? path + '.' + k : k;
+        if (typeof v === 'number') {
+          if (Math.abs(v - value) <= eps) hits.push({ path: p, value: v });
+        } else if (v !== null && typeof v === 'object' && !seen.has(v)) {
+          if (typeof Node !== 'undefined' && v instanceof Node) continue;
+          if (ArrayBuffer.isView(v) || v instanceof ArrayBuffer) continue;
+          seen.add(v);
+          walk(v, p, depth + 1);
+        }
+      }
+    };
+    walk(window, '', 0);
+    return { hits, nodes, truncated: nodes >= maxNodes };
+  };
+
   // Search logged frame previews for a number (e.g. the damage you saw on
   // screen) as u16 / u32 / f32 little-endian at every byte offset. Raise
   // CONFIG.ws.previewBytes first (e.g. 256) so previews hold whole frames.
@@ -524,6 +563,7 @@
       stats: wsStats,
       find,
     },
+    scan,
     parseFrame,
     resolvePath,
   };
