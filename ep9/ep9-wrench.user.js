@@ -52,6 +52,13 @@
       // byte offset FROM THE START OF THE FRAME (header is 8 bytes), and the type
       // ('u16' | 'u32' | 'f32', little-endian). Multiplied in a copy before send.
       packet: { opcode: null, offset: null, type: null },
+      // Mechanism C, INCOMING packet field (what the client receives and shows).
+      // Source: user capture. Typed damage 5053 = 0x13bd was found at frame offset
+      // 12 of inbound opcode 0x02ed (len 25: [id 0xb1][5053][0][0xb33f]), inside
+      // a message batched with a 0x0379 frame. That 0x02ed is a damage report is
+      // my reading of one hit, NOT confirmed. This changes what the client
+      // receives, not what the server computed.
+      incoming: { opcode: 0x02ed, offset: 12, type: 'u32' },
     },
 
     // Skill attack range = 1.5x normal. Client-state field only (gated): window
@@ -217,7 +224,26 @@
         record('out', url, data);
         return rawSend(damage.patchOut(data));
       };
-      ws.addEventListener('message', (ev) => {
+      const nativeAdd = ws.addEventListener.bind(ws);
+      const nativeRemove = ws.removeEventListener.bind(ws);
+      const wrapped = new Map();   // page fn -> wrapped fn
+      const wrap = (fn) => {
+        if (typeof fn !== 'function') return fn;
+        if (!wrapped.has(fn)) wrapped.set(fn, function (ev) { return fn.call(this, damage.patchIn(ev)); });
+        return wrapped.get(fn);
+      };
+      ws.addEventListener = (type, fn, opts) => nativeAdd(type, type === 'message' ? wrap(fn) : fn, opts);
+      ws.removeEventListener = (type, fn, opts) => nativeRemove(type, type === 'message' && wrapped.has(fn) ? wrapped.get(fn) : fn, opts);
+      const omDesc = Object.getOwnPropertyDescriptor(orig.WebSocket.prototype, 'onmessage');
+      if (omDesc && omDesc.set) {
+        let pageOnMessage = null;
+        Object.defineProperty(ws, 'onmessage', {
+          configurable: true,
+          get: () => pageOnMessage,
+          set: (fn) => { pageOnMessage = fn; omDesc.set.call(ws, typeof fn === 'function' ? wrap(fn) : fn); },
+        });
+      }
+      nativeAdd('message', (ev) => {
         const d = ev.data;
         if (d instanceof ArrayBuffer) record('in', url, d);
         else if (typeof Blob !== 'undefined' && d instanceof Blob) d.arrayBuffer().then((ab) => record('in', url, ab)).catch(() => {});
@@ -251,18 +277,22 @@
 
     const fieldCfg = () => { const d = CONFIG.damage; return d.playerPath !== null && d.damageField !== null; };
     const pktCfg = () => { const p = CONFIG.damage.packet; return p.opcode !== null && p.offset !== null && p.type !== null; };
+    const incCfg = () => { const p = CONFIG.damage.incoming; return p.opcode !== null && p.offset !== null && p.type !== null; };
+    let incPatched = 0;
+    let incBlobSkipped = 0;
     const SIZES = { u16: 2, u32: 4, f32: 4 };
 
     const status = () => {
       const d = CONFIG.damage;
       if (!isFiniteNumber(d.multiplier) || d.multiplier <= 0) return 'bad multiplier';
-      if (!fieldCfg() && !pktCfg()) return 'UNSET field/packet';
+      if (!fieldCfg() && !pktCfg() && !incCfg()) return 'UNSET field/packet/incoming';
       if (d.playerPath !== null && d.damageField !== null) {
         const player = resolvePath(window, d.playerPath);
         if (player === null || typeof player !== 'object') return 'playerPath does not resolve';
         if (!isFiniteNumber(player[d.damageField])) return 'damageField not a finite number';
       }
       if (pktCfg() && !(d.packet.type in SIZES)) return 'packet.type invalid';
+      if (incCfg() && !(d.incoming.type in SIZES)) return 'incoming.type invalid';
       return enabled ? 'ON' : 'ready';
     };
 
@@ -297,6 +327,8 @@
       if (s !== 'ready') return s;
       enabled = true;
       patched = 0;
+      incPatched = 0;
+      incBlobSkipped = 0;
       if (fieldCfg()) rafId = orig.raf(tick);
       return 'ON';
     };
@@ -322,7 +354,53 @@
       return bytes;
     };
 
-    return { status, toggle, stop, patchOut, get patched() { return patched; } };
+    const mulAt = (view, offset, type) => {
+      const m = CONFIG.damage.multiplier;
+      if (type === 'f32') view.setFloat32(offset, view.getFloat32(offset, true) * m, true);
+      else if (type === 'u32') view.setUint32(offset, Math.min(0xffffffff, Math.round(view.getUint32(offset, true) * m)), true);
+      else view.setUint16(offset, Math.min(0xffff, Math.round(view.getUint16(offset, true) * m)), true);
+    };
+
+    // Wraps a page message handler so it receives the event with patched data.
+    // A message may hold several frames back to back, so each is walked by its
+    // length field. Only ArrayBuffer data is patched (Blob data is counted).
+    const patchIn = (ev) => {
+      if (!enabled || !incCfg()) return ev;
+      const d = ev.data;
+      if (typeof Blob !== 'undefined' && d instanceof Blob) { incBlobSkipped += 1; return ev; }
+      if (!(d instanceof ArrayBuffer)) return ev;
+      const p = CONFIG.damage.incoming;
+      const size = SIZES[p.type];
+      if (!size) return ev;
+      const buf = d.slice(0);
+      const view = new DataView(buf);
+      let hit = false;
+      for (let off = 0; off + 8 <= buf.byteLength;) {
+        const flen = view.getUint32(off, true);
+        if (flen < 8 || off + flen > buf.byteLength) break;
+        if (view.getUint32(off + 4, true) === p.opcode && p.offset >= 8 && p.offset + size <= flen) {
+          mulAt(view, off + p.offset, p.type);
+          incPatched += 1;
+          hit = true;
+        }
+        off += flen;
+      }
+      if (!hit) return ev;
+      return new Proxy(ev, {
+        get(t, k) {
+          if (k === 'data') return buf;
+          const v = Reflect.get(t, k, t);
+          return typeof v === 'function' ? v.bind(t) : v;
+        },
+      });
+    };
+
+    return {
+      status, toggle, stop, patchOut, patchIn,
+      get patched() { return patched; },
+      get incomingPatched() { return incPatched; },
+      get incomingBlobSkipped() { return incBlobSkipped; },
+    };
   })();
 
   // Skill attack range multiplier (client-state field, gated on CONFIG.range).
