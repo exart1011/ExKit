@@ -217,7 +217,7 @@
       const rawSend = ws.send.bind(ws);
       ws.send = (data) => {
         const r = record('out', url, data);
-        if (r && r.opcode !== null) lastOut.set(r.opcode, { socket: ws, rawSend, bytes: r.bytes });
+        if (r && r.opcode !== null) lastOut.set(r.opcode, { socket: ws, rawSend, bytes: r.bytes, url });
         return rawSend(data);
       };
       ws.addEventListener('message', (ev) => {
@@ -278,6 +278,12 @@
         const cap = lastOut.get(op);
         if (!cap || cap.socket.readyState !== 1) return false;
         cap.rawSend(cap.bytes.slice());
+        // rawSend bypasses the ws.send hook, so log replays here (replayed:true).
+        pushLog({
+          t: Math.round(orig.perfNow()), dir: 'out', url: cap.url, kind: 'bin', size: cap.bytes.length,
+          opcode: '0x' + op.toString(16).padStart(4, '0'), framed: true, replayed: true,
+          preview: toHex(cap.bytes.subarray(0, CONFIG.ws.previewBytes)),
+        });
       }
       return true;
     };
