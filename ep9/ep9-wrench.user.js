@@ -29,7 +29,7 @@
         0x019c: 'move?   len29: f32 x,y,z @8/@12/@16 (y~0.299 constant), u32=5 @20, f32 @24 (~52.28 while flag=1), u8 flag @28; ~every 200ms',
         0x2700: 'slot?   len11: u8=1, u8 0x65..0x6b, u8=0; sent twice around each 0x01c0',
         0x01c0: 'cast?   len16: u32 id (seen 0x65..0xb2), u32=2; follows 0x2700 in the same ms',
-        0x2394: 'after-cast? len52/28: u32 fields, includes the same id as 0x01c0, ~16ms after it',
+        0x2394: 'after-cast? len52 (u32le fields, assumed): [2, 0x0b, 9, id, 2, 0, 0, 0, 1, 0, 0xb33f]; id = same value as in 0x01c0; 0xb33f constant in 3/3 captures, meaning unknown; follows 0x2700 by ~17ms',
         0x23a7: 'target?  len13: u32 ~122000 slowly changing, u8=0',
         0x2609: 'ping?    len10: u16 0xea60 (60000) @8, ~every 20s',
         0x2658: 'beat?    len9, ~every 60s',
@@ -47,9 +47,12 @@
     },
 
     replay: {
-      // Opcode of the frame to resend. UNSET: I do not know which captured
-      // opcode is the attack, since your capture did not say which action you did.
-      opcode: null,
+      // Opcodes of the frames to resend, in order, as one burst per tick (a
+      // single skill-1 right-click was captured as the burst 0x2700, 0x01c0,
+      // 0x2394 within ~20 ms). UNSET (null): which of them the server treats as
+      // the cast is unknown. Suggested first test, not a result: [0x2394], then
+      // add 0x01c0 / 0x2700 if the server ignores it. Example: [0x2394]
+      opcodes: null,
       // Resend interval in real milliseconds. UNSET.
       intervalMs: null,
       minIntervalMs: 20,   // my floor, not game data
@@ -239,7 +242,7 @@
     .sort((a, b) => b.count - a.count);
 
   // ---------------------------------------------------------------------------
-  // Replay: resend the last captured outgoing frame of CONFIG.replay.opcode at a
+  // Replay: resend the last captured outgoing frame of each CONFIG.replay.opcodes entry at a
   // fixed real-time interval. Gated on config; stops on window blur, socket
   // close, count limit or stop(). The frame is sent byte-for-byte as captured,
   // so anything inside it (position, target id) is as stale as the capture.
@@ -250,13 +253,39 @@
 
     const status = () => {
       const r = CONFIG.replay;
-      if (r.opcode === null) return 'UNSET opcode';
+      const base = burstStatus();
+      if (base !== 'ready') return base;
       if (r.intervalMs === null) return 'UNSET intervalMs';
       if (!isFiniteNumber(r.intervalMs) || r.intervalMs < r.minIntervalMs) return 'intervalMs below floor';
-      const cap = lastOut.get(r.opcode);
-      if (!cap) return 'no captured frame for opcode yet';
-      if (cap.socket.readyState !== 1) return 'socket not open';
       return timer ? 'ON' : 'ready';
+    };
+
+    // Checks everything except the interval, so once() works without one.
+    const burstStatus = () => {
+      const r = CONFIG.replay;
+      if (!Array.isArray(r.opcodes) || r.opcodes.length === 0) return 'UNSET opcodes';
+      for (const op of r.opcodes) {
+        const cap = lastOut.get(op);
+        if (!cap) return 'no captured frame for 0x' + op.toString(16) + ' yet';
+        if (cap.socket.readyState !== 1) return 'socket not open';
+      }
+      return 'ready';
+    };
+
+    // Send the last captured frame of each configured opcode, byte-for-byte, in order.
+    const sendBurst = () => {
+      for (const op of CONFIG.replay.opcodes) {
+        const cap = lastOut.get(op);
+        if (!cap || cap.socket.readyState !== 1) return false;
+        cap.rawSend(cap.bytes.slice());
+      }
+      return true;
+    };
+
+    // One manual test shot, no timer: use this first to see if the server reacts.
+    const once = () => {
+      const s = burstStatus();
+      return s === 'ready' ? (sendBurst() ? 'sent' : 'failed') : s;
     };
 
     const stop = () => {
@@ -269,16 +298,14 @@
       if (s !== 'ready') return s;
       const r = CONFIG.replay;
       timer = orig.setInterval(() => {
-        const cap = lastOut.get(r.opcode);
-        if (!cap || cap.socket.readyState !== 1 || sent >= r.maxCount) { stop(); return; }
-        cap.rawSend(cap.bytes.slice());
+        if (sent >= r.maxCount || !sendBurst()) { stop(); return; }
         sent += 1;
       }, r.intervalMs);
       return 'ON';
     };
 
     window.addEventListener('blur', stop);
-    return { status, start, stop, toggle: () => (timer ? (stop(), 'OFF') : start()) };
+    return { status, once, start, stop, toggle: () => (timer ? (stop(), 'OFF') : start()) };
   })();
 
   // ---------------------------------------------------------------------------
@@ -388,7 +415,7 @@
   //     attacks, or only skill key 1) for ~10 uses, then run
   //     console.table(__wrench.ws.stats()). The opcode whose count tracks your
   //     uses (and is not 0x019c movement or a heartbeat) is the attack/cast.
-  //  2. Put that opcode in CONFIG.replay.opcode and a real-time interval in
+  //  2. Put that opcode in CONFIG.replay.opcodes ([0x2394] etc.) and a real-time interval in
   //     CONFIG.replay.intervalMs, then use ';' to toggle. Watch the 'in' rows
   //     in __wrench.ws.dump() for the server's reaction (accept vs. ignore).
   //  3. If the server ignores faster casts, attack speed is enforced
