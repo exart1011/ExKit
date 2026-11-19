@@ -10,9 +10,7 @@
 
   // ---------------------------------------------------------------------------
   // CONFIG. Every game-specific value lives here.
-  // null = UNSET (not 0). Nothing below was read from the EP9 client; the client
-  // was not reachable from the build container, so these stay unset until you
-  // fill them from the client you actually load (see recipe at the bottom).
+  // null = UNSET (not 0).
   // ---------------------------------------------------------------------------
   const CONFIG = {
     time: {
@@ -20,18 +18,45 @@
       scaleSteps: [0.5, 1, 1.5, 2, 3, 4, 6, 8],
       startIndex: 1,
     },
+
+    // Source: user's __wrench.ws.dump() capture, wss://ws7.ep9-online.com,
+    // client-to-server frames only. Client build/version: unknown.
+    // Framing (VERIFIED against every captured frame): u32le total length that
+    // equals the byte count, then u32le opcode, then body. Opcode MEANINGS below
+    // are hypotheses from the capture, not confirmed in-game.
+    protocol: {
+      opcodes: {
+        0x019c: 'move?   len29: f32 x,y,z @8/@12/@16 (y~0.299 constant), u32=5 @20, f32 @24 (~52.28 while flag=1), u8 flag @28; ~every 200ms',
+        0x2700: 'slot?   len11: u8=1, u8 0x65..0x6b, u8=0; sent twice around each 0x01c0',
+        0x01c0: 'cast?   len16: u32 id (seen 0x65..0xb2), u32=2; follows 0x2700 in the same ms',
+        0x2394: 'after-cast? len52/28: u32 fields, includes the same id as 0x01c0, ~16ms after it',
+        0x23a7: 'target?  len13: u32 ~122000 slowly changing, u8=0',
+        0x2609: 'ping?    len10: u16 0xea60 (60000) @8, ~every 20s',
+        0x2658: 'beat?    len9, ~every 60s',
+        0x00a1: 'beat2?   len21 all zero body, ~every 60s',
+      },
+    },
+
     attack: {
-      // Dotted path from window to the local player object, e.g. "a.b.c".
-      // Source: UNSET, derive from client (recipe step 3).
+      // Dotted path from window to the local player object. UNSET (this is a
+      // canvas game with a binary protocol; a JS-side path was not shown to me).
       playerPath: null,
-      // Field on that object that counts DOWN to the next allowed attack. Unset.
       cooldownField: null,
-      // Field holding the delay BETWEEN attacks (ms or frames, unit unknown). Unset.
       intervalField: null,
-      // Interval divisor applied when intervalField is set.
       intervalDivisor: 2,
     },
-    ws: { logCap: 500, previewBytes: 32 },
+
+    replay: {
+      // Opcode of the frame to resend. UNSET: I do not know which captured
+      // opcode is the attack, since your capture did not say which action you did.
+      opcode: null,
+      // Resend interval in real milliseconds. UNSET.
+      intervalMs: null,
+      minIntervalMs: 20,   // my floor, not game data
+      maxCount: 500,       // my bound per start
+    },
+
+    ws: { logCap: 500, previewBytes: 32, gapCap: 200 },
   };
 
   // ---------------------------------------------------------------------------
@@ -48,8 +73,33 @@
   };
 
   const isFiniteNumber = (v) => typeof v === 'number' && Number.isFinite(v);
-
   const toHex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(' ');
+
+  // Returns { length, opcode, view } or null when the frame does not match the
+  // verified framing (length field must equal the byte count).
+  const parseFrame = (data) => {
+    let view;
+    if (data instanceof ArrayBuffer) view = new DataView(data);
+    else if (ArrayBuffer.isView(data)) view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    else return null;
+    if (view.byteLength < 8) return null;
+    const length = view.getUint32(0, true);
+    if (length !== view.byteLength) return null;
+    return { length, opcode: view.getUint32(4, true), view };
+  };
+
+  const median = (xs) => {
+    if (xs.length === 0) return null;
+    const s = xs.slice().sort((a, b) => a - b);
+    const m = s.length >> 1;
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+  };
+
+  const toBytes = (data) => {
+    if (data instanceof ArrayBuffer) return new Uint8Array(data.slice(0));
+    if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+    return null;
+  };
 
   // ---------------------------------------------------------------------------
   // Originals, captured before the page can touch them
@@ -61,6 +111,7 @@
     raf: window.requestAnimationFrame.bind(window),
     setTimeout: window.setTimeout.bind(window),
     setInterval: window.setInterval.bind(window),
+    clearInterval: window.clearInterval.bind(window),
     WebSocket: window.WebSocket,
   };
 
@@ -110,43 +161,128 @@
   };
   window.setTimeout = (fn, d, ...args) => orig.setTimeout(fn, scaleDelay(d), ...args);
   window.setInterval = (fn, d, ...args) => orig.setInterval(fn, scaleDelay(d), ...args);
-  // Note: an existing interval keeps the delay it was created with. Games that
-  // create one long-lived setInterval pick up the scale only after it is re-created
-  // (reload the page with the scale already set, or see "timers" in the recipe).
+  // An interval keeps the delay it was created with. If the game builds its
+  // 200ms movement timer once at startup, set the scale before the game starts
+  // (reload with the scale already chosen) or the timer rate will not follow.
 
   // ---------------------------------------------------------------------------
-  // WebSocket send logger (capture aid for finding the attack packet and its rate)
+  // WebSocket capture: outgoing + incoming frames, per-opcode timing, and the
+  // last outgoing frame per opcode (with its socket) for the replay module.
   // ---------------------------------------------------------------------------
   const wsLog = [];
-  const logFrame = (url, data) => {
-    let kind, size, preview;
-    if (typeof data === 'string') {
-      kind = 'text'; size = data.length; preview = data.slice(0, CONFIG.ws.previewBytes);
-    } else if (data instanceof ArrayBuffer) {
-      kind = 'bin'; size = data.byteLength;
-      preview = toHex(new Uint8Array(data, 0, Math.min(size, CONFIG.ws.previewBytes)));
-    } else if (ArrayBuffer.isView(data)) {
-      kind = 'bin'; size = data.byteLength;
-      preview = toHex(new Uint8Array(data.buffer, data.byteOffset, Math.min(size, CONFIG.ws.previewBytes)));
-    } else {
-      kind = typeof data; size = -1; preview = '';
-    }
-    wsLog.push({ t: Math.round(orig.perfNow()), url, kind, size, preview });
+  const stats = new Map();          // "dir:opcode" -> { dir, opcode, count, lastT, gaps[] }
+  const lastOut = new Map();        // opcode -> { socket, rawSend, bytes }
+
+  const pushLog = (entry) => {
+    wsLog.push(entry);
     if (wsLog.length > CONFIG.ws.logCap) wsLog.shift();
+  };
+
+  const record = (dir, url, data) => {
+    const t = Math.round(orig.perfNow());
+    const bytes = toBytes(data);
+    if (bytes === null) {
+      pushLog({ t, dir, url, kind: typeof data, size: -1, opcode: null, preview: '' });
+      return null;
+    }
+    const f = parseFrame(bytes);
+    const opcode = f ? f.opcode : null;
+    pushLog({
+      t, dir, url, kind: 'bin', size: bytes.length,
+      opcode: opcode === null ? null : '0x' + opcode.toString(16).padStart(4, '0'),
+      framed: f !== null,
+      preview: toHex(bytes.subarray(0, CONFIG.ws.previewBytes)),
+    });
+    if (opcode !== null) {
+      const key = dir + ':' + opcode;
+      let s = stats.get(key);
+      if (!s) { s = { dir, opcode, count: 0, lastT: null, gaps: [] }; stats.set(key, s); }
+      s.count += 1;
+      if (s.lastT !== null) {
+        s.gaps.push(t - s.lastT);
+        if (s.gaps.length > CONFIG.ws.gapCap) s.gaps.shift();
+      }
+      s.lastT = t;
+    }
+    return { opcode, bytes };
   };
 
   window.WebSocket = new Proxy(orig.WebSocket, {
     construct(target, args, newTarget) {
       const ws = Reflect.construct(target, args, newTarget);
       const url = String(args[0]);
-      const send = ws.send.bind(ws);
-      ws.send = (data) => { logFrame(url, data); return send(data); };
+      const rawSend = ws.send.bind(ws);
+      ws.send = (data) => {
+        const r = record('out', url, data);
+        if (r && r.opcode !== null) lastOut.set(r.opcode, { socket: ws, rawSend, bytes: r.bytes });
+        return rawSend(data);
+      };
+      ws.addEventListener('message', (ev) => {
+        const d = ev.data;
+        if (d instanceof ArrayBuffer) record('in', url, d);
+        else if (typeof Blob !== 'undefined' && d instanceof Blob) d.arrayBuffer().then((ab) => record('in', url, ab)).catch(() => {});
+        else pushLog({ t: Math.round(orig.perfNow()), dir: 'in', url, kind: typeof d, size: -1, opcode: null, preview: String(d).slice(0, CONFIG.ws.previewBytes) });
+      });
       return ws;
     },
   });
 
+  const wsStats = () => Array.from(stats.values())
+    .map((s) => ({
+      dir: s.dir,
+      opcode: '0x' + s.opcode.toString(16).padStart(4, '0'),
+      count: s.count,
+      minGapMs: s.gaps.length ? Math.min(...s.gaps) : null,
+      medianGapMs: median(s.gaps),
+      note: s.dir === 'out' ? (CONFIG.protocol.opcodes[s.opcode] || 'unknown') : '',
+    }))
+    .sort((a, b) => b.count - a.count);
+
   // ---------------------------------------------------------------------------
-  // Attack speed module. Fully gated on config; does nothing while unset.
+  // Replay: resend the last captured outgoing frame of CONFIG.replay.opcode at a
+  // fixed real-time interval. Gated on config; stops on window blur, socket
+  // close, count limit or stop(). The frame is sent byte-for-byte as captured,
+  // so anything inside it (position, target id) is as stale as the capture.
+  // ---------------------------------------------------------------------------
+  const replay = (() => {
+    let timer = 0;
+    let sent = 0;
+
+    const status = () => {
+      const r = CONFIG.replay;
+      if (r.opcode === null) return 'UNSET opcode';
+      if (r.intervalMs === null) return 'UNSET intervalMs';
+      if (!isFiniteNumber(r.intervalMs) || r.intervalMs < r.minIntervalMs) return 'intervalMs below floor';
+      const cap = lastOut.get(r.opcode);
+      if (!cap) return 'no captured frame for opcode yet';
+      if (cap.socket.readyState !== 1) return 'socket not open';
+      return timer ? 'ON' : 'ready';
+    };
+
+    const stop = () => {
+      if (timer) { orig.clearInterval(timer); timer = 0; }
+      sent = 0;
+    };
+
+    const start = () => {
+      const s = status();
+      if (s !== 'ready') return s;
+      const r = CONFIG.replay;
+      timer = orig.setInterval(() => {
+        const cap = lastOut.get(r.opcode);
+        if (!cap || cap.socket.readyState !== 1 || sent >= r.maxCount) { stop(); return; }
+        cap.rawSend(cap.bytes.slice());
+        sent += 1;
+      }, r.intervalMs);
+      return 'ON';
+    };
+
+    window.addEventListener('blur', stop);
+    return { status, start, stop, toggle: () => (timer ? (stop(), 'OFF') : start()) };
+  })();
+
+  // ---------------------------------------------------------------------------
+  // Attack speed module (client-state fields). Fully gated on config.
   // ---------------------------------------------------------------------------
   const attack = (() => {
     let enabled = false;
@@ -198,11 +334,11 @@
   })();
 
   // ---------------------------------------------------------------------------
-  // HUD + hotkeys.  ]  faster   [  slower   \  reset to 1x   '  attack toggle
+  // HUD + hotkeys.  ]  faster   [  slower   \  1x   '  field attack   ;  packet replay
   // ---------------------------------------------------------------------------
   let hud = null;
   const render = () => {
-    if (hud) hud.textContent = `speed x${clock.scale}  |  attack: ${attack.status()}`;
+    if (hud) hud.textContent = `speed x${clock.scale} | field-attack: ${attack.status()} | replay: ${replay.status()}`;
   };
 
   const stepScale = (dir) => {
@@ -221,6 +357,7 @@
     else if (e.key === '[') stepScale(-1);
     else if (e.key === '\\') { clock.setScale(1); render(); }
     else if (e.key === "'") { attack.toggle(); render(); }
+    else if (e.key === ';') { replay.toggle(); render(); }
   }, true);
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -235,22 +372,26 @@
     CONFIG,
     setScale: (s) => { const ok = clock.setScale(s); render(); return ok; },
     attack,
-    ws: { dump: () => wsLog.slice(), clear: () => { wsLog.length = 0; } },
+    replay,
+    ws: {
+      dump: () => wsLog.slice(),
+      clear: () => { wsLog.length = 0; stats.clear(); },
+      stats: wsStats,
+    },
+    parseFrame,
     resolvePath,
   };
 
   // ---------------------------------------------------------------------------
-  // RECIPE to fill CONFIG.attack (nothing here is verified against EP9):
-  //  1. Open DevTools > Sources, find the main game bundle, search for "attack",
-  //     "cooldown", "atkSpeed", "swing" and the key/click handler that fires it.
-  //  2. Console: __wrench.ws.dump() after attacking ~10 times. Packets of the
-  //     same size/prefix at a fixed interval are the attack packet. If the server
-  //     enforces the interval, client-side attack speed will not change real rate.
-  //  3. Find the object holding your character in the bundle's globals (or a
-  //     module export exposed on window). Set playerPath, then the cooldown
-  //     (counts down) or interval (delay between attacks) field. Confirm via
-  //     __wrench.resolvePath(window, "<path>") in the console.
-  //  4. Timers: if speed does not change game logic, the game likely uses its own
-  //     delta from rAF timestamps (already scaled) or a Worker timer (not hooked).
+  // RECIPE to finish attack speed:
+  //  1. __wrench.ws.clear(), then do ONE action repeatedly (e.g. only basic
+  //     attacks, or only skill key 1) for ~10 uses, then run
+  //     console.table(__wrench.ws.stats()). The opcode whose count tracks your
+  //     uses (and is not 0x019c movement or a heartbeat) is the attack/cast.
+  //  2. Put that opcode in CONFIG.replay.opcode and a real-time interval in
+  //     CONFIG.replay.intervalMs, then use ';' to toggle. Watch the 'in' rows
+  //     in __wrench.ws.dump() for the server's reaction (accept vs. ignore).
+  //  3. If the server ignores faster casts, attack speed is enforced
+  //     server-side and only the cast rate it allows can be reached.
   // ---------------------------------------------------------------------------
 })();
