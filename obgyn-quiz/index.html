@@ -1,0 +1,304 @@
+<title>OB-GYN Lecture Quiz</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="OBGYN Quiz">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&family=IBM+Plex+Sans+Thai:wght@500;600;700&display=swap">
+<style>
+/* Layout: one calm reading column (max ~760px) — home is a lecture index grouped by week; quiz is one question per screen with large tap targets and a fixed bottom bar. */
+:root{
+  --bg:#f6f4f1; --card:#ffffff; --ink:#1e2126; --soft:#5d636b; --line:#e3dfd8; --chip:#efece6;
+  --accent:#a83c64; --accent-bg:#f9ebf1; --accent-ink:#ffffff;
+  --ok:#21794a; --ok-bg:#e6f4ec; --bad:#b3362c; --bad-bg:#fbe9e7; --warn:#8a6512; --warn-bg:#f8f0dc;
+  --ob:#2f6f8f; --gy:#7a4fa3; --x:#8a6d1d;
+  --f-body:Sarabun,"Noto Sans Thai","Leelawadee UI",Tahoma,system-ui,sans-serif;
+  --f-head:"IBM Plex Sans Thai",Sarabun,"Noto Sans Thai",system-ui,sans-serif;
+  --r:14px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#141619; --card:#1d2024; --ink:#ebe8e3; --soft:#a4a9b0; --line:#2f3338; --chip:#262a2f;
+  --accent:#ec8db0; --accent-bg:#3a2430; --accent-ink:#1d1418;
+  --ok:#7fd39f; --ok-bg:#183223; --bad:#f19a90; --bad-bg:#3a1f1c; --warn:#e2c372; --warn-bg:#33291a;
+  --ob:#86bfdc; --gy:#c6a6e6; --x:#d9bd6c; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#141619; --card:#1d2024; --ink:#ebe8e3; --soft:#a4a9b0; --line:#2f3338; --chip:#262a2f;
+  --accent:#ec8db0; --accent-bg:#3a2430; --accent-ink:#1d1418;
+  --ok:#7fd39f; --ok-bg:#183223; --bad:#f19a90; --bad-bg:#3a1f1c; --warn:#e2c372; --warn-bg:#33291a;
+  --ob:#86bfdc; --gy:#c6a6e6; --x:#d9bd6c; color-scheme:dark}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{background:var(--bg)}
+body{margin:0;color:var(--ink);font-family:var(--f-body);font-size:17px;line-height:1.6;-webkit-tap-highlight-color:transparent;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--bg)}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+h1,h2,h3{font-family:var(--f-head);text-wrap:balance;margin:0}
+.col{max-width:760px;margin:0 auto}
+.muted{color:var(--soft)}
+.num{font-variant-numeric:tabular-nums}
+
+/* ---------- home ---------- */
+#home{padding-block:20px 48px}
+.mast{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.mast h1{font-size:28px;line-height:1.2}
+.mast .sub{font-size:14px;color:var(--soft)}
+.stat{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;margin-bottom:14px}
+.stat div{background:var(--card);padding:12px 14px}
+.stat b{display:block;font-family:var(--f-head);font-size:24px;line-height:1.2}
+.stat span{font-size:13px;color:var(--soft)}
+.quick{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.btn{border:1px solid var(--line);background:var(--card);border-radius:12px;padding:12px 16px;min-height:48px;font-weight:600;display:inline-flex;align-items:center;gap:8px}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn:disabled{opacity:.45;cursor:default}
+.btn .c{font-weight:500;opacity:.8}
+.opts{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.sw{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:var(--chip);font-size:14px;border:1px solid transparent;user-select:none}
+.sw[aria-pressed="true"]{background:var(--accent-bg);border-color:var(--accent);color:var(--accent)}
+.sw::before{content:"";width:14px;height:14px;border-radius:4px;border:2px solid currentColor;opacity:.7}
+.sw[aria-pressed="true"]::before{background:currentColor;opacity:1}
+.search{display:flex;gap:8px;margin-bottom:22px}
+.search input{flex:1;min-width:0;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);font:inherit;font-size:16px}
+.wk{font-size:13px;letter-spacing:.04em;color:var(--soft);font-weight:600;margin:22px 0 8px}
+.lecs{display:flex;flex-direction:column;gap:8px}
+.lec{display:grid;grid-template-columns:6px 1fr auto;gap:0 14px;align-items:center;width:100%;text-align:left;border:1px solid var(--line);background:var(--card);border-radius:var(--r);padding:12px 14px 12px 0;overflow:hidden}
+.lec .bar{align-self:stretch;margin:-12px 0;background:var(--ob)}
+.lec.g .bar{background:var(--gy)}.lec.x .bar{background:var(--x)}
+.lec .t{min-width:0}
+.lec .t b{display:block;font-family:var(--f-head);font-weight:600;font-size:16px;line-height:1.35}
+.lec .t small{display:block;color:var(--soft);font-size:13px}
+.lec .p{text-align:right;font-size:13px;color:var(--soft);white-space:nowrap}
+.lec .p b{display:block;font-size:15px;color:var(--ink)}
+.meter{grid-column:2 / 4;height:4px;border-radius:2px;background:var(--chip);margin-top:8px;overflow:hidden;display:flex}
+.meter i{display:block;height:100%}
+.meter .mo{background:var(--ok)}.meter .mb{background:var(--bad)}
+.foot{margin-top:28px;font-size:13px;color:var(--soft);display:flex;flex-direction:column;gap:8px}
+.foot details summary{cursor:pointer}
+.foot ul{padding-left:18px;margin:6px 0}
+.linkbtn{background:none;border:0;padding:0;color:var(--bad);text-decoration:underline;font-size:13px}
+.confirm{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+
+/* ---------- quiz ---------- */
+#quiz{padding-block:0 120px}
+.qtop{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--bg);border-bottom:1px solid var(--line);margin:0 calc(-1 * max(16px,env(safe-area-inset-left,0px))) 0;padding:10px max(16px,env(safe-area-inset-left,0px))}
+.qtop .row{display:flex;align-items:center;gap:10px}
+.back{border:1px solid var(--line);background:var(--card);border-radius:10px;min-height:44px;padding:0 12px}
+.qtop .nm{flex:1;min-width:0;font-size:14px;color:var(--soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qtop .sc{font-size:14px;white-space:nowrap}
+.qtop .sc b{color:var(--ok)}.qtop .sc em{font-style:normal;color:var(--bad)}
+.prog{height:4px;background:var(--chip);border-radius:2px;margin-top:8px;overflow:hidden}
+.prog i{display:block;height:100%;background:var(--accent);transition:width .2s}
+.card{margin-top:18px}
+.tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.tag{font-size:12px;padding:2px 9px;border-radius:999px;background:var(--chip);color:var(--soft)}
+.tag.hot{background:var(--accent-bg);color:var(--accent);font-weight:600}
+.tag.w{background:var(--warn-bg);color:var(--warn)}
+.qno{font-size:13px;color:var(--soft);margin-bottom:4px}
+.stem{font-size:20px;line-height:1.55;font-weight:500;margin:0 0 16px;white-space:pre-wrap;overflow-wrap:anywhere}
+.choices{display:flex;flex-direction:column;gap:10px}
+.ch{display:grid;grid-template-columns:36px 1fr 24px;gap:12px;align-items:center;width:100%;text-align:left;min-height:56px;padding:10px 14px;border:1.5px solid var(--line);background:var(--card);border-radius:var(--r);font-size:17px;line-height:1.45;transition:border-color .12s,background .12s}
+.ch .k{width:36px;height:36px;border-radius:10px;background:var(--chip);display:grid;place-items:center;font-weight:700;font-family:var(--f-head)}
+.ch .tx{min-width:0;overflow-wrap:anywhere}
+.ch .mk{font-weight:700;text-align:center}
+@media (hover:hover){.ch:not([disabled]):hover{border-color:var(--accent)}}
+.ch:not([disabled]):active{transform:scale(.995)}
+.ch[disabled]{cursor:default}
+.ch.ok{border-color:var(--ok);background:var(--ok-bg)}.ch.ok .k{background:var(--ok);color:var(--card)}.ch.ok .mk{color:var(--ok)}
+.ch.bad{border-color:var(--bad);background:var(--bad-bg)}.ch.bad .k{background:var(--bad);color:var(--card)}.ch.bad .mk{color:var(--bad)}
+.ch.dim{opacity:.55}
+.ch.pick{border-color:var(--accent);background:var(--accent-bg)}.ch.pick .mk{color:var(--accent)}
+.raw{border:1px dashed var(--line);border-radius:var(--r);padding:10px 14px;margin:0 0 14px;font-size:16px;color:var(--soft)}
+.raw div{overflow-wrap:anywhere}
+.reveal{width:100%;min-height:56px;border:1.5px dashed var(--accent);color:var(--accent);background:var(--accent-bg);border-radius:var(--r);font-weight:600;font-size:17px}
+.verdict{margin-top:16px;padding:12px 16px;border-radius:var(--r);font-weight:700;font-family:var(--f-head);font-size:18px;display:flex;gap:10px;align-items:center}
+.verdict.ok{background:var(--ok-bg);color:var(--ok)}.verdict.bad{background:var(--bad-bg);color:var(--bad)}.verdict.n{background:var(--warn-bg);color:var(--warn)}
+.ans{margin-top:12px;border:1px solid var(--line);background:var(--card);border-radius:var(--r);padding:14px 16px}
+.ans h3{font-size:14px;color:var(--soft);font-weight:600;letter-spacing:.02em;margin-bottom:6px}
+.ans .a{padding:6px 0;border-top:1px solid var(--line);overflow-wrap:anywhere}
+.ans .a:first-of-type{border-top:0}
+.ans .f{font-size:13px;color:var(--soft);white-space:nowrap}
+.ans .src{margin-top:8px;font-size:13px;color:var(--soft)}
+.self{display:flex;gap:10px;margin-top:12px}
+.self .btn{flex:1;justify-content:center}
+.self .btn.y[aria-pressed="true"]{background:var(--ok);border-color:var(--ok);color:var(--card)}
+.self .btn.n[aria-pressed="true"]{background:var(--bad);border-color:var(--bad);color:var(--card)}
+.nav{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--bg);border-top:1px solid var(--line);
+  padding:10px max(16px,env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.nav .col{display:flex;gap:10px;align-items:center}
+.nav .btn{flex:1;justify-content:center}
+.nav .gridbtn{flex:0 0 auto}
+.sheet{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.35);display:flex;align-items:flex-end;justify-content:center}
+.sheet .in{background:var(--bg);width:100%;max-width:760px;max-height:70vh;overflow:auto;border-radius:18px 18px 0 0;
+  padding:16px max(16px,env(safe-area-inset-right,0px)) calc(16px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.sheet .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.dots{display:grid;grid-template-columns:repeat(auto-fill,minmax(46px,1fr));gap:8px}
+.dots button{min-height:44px;border-radius:10px;border:1px solid var(--line);background:var(--card);font-size:14px}
+.dots .ok{background:var(--ok-bg);border-color:var(--ok);color:var(--ok)}
+.dots .bad{background:var(--bad-bg);border-color:var(--bad);color:var(--bad)}
+.dots .cur{outline:3px solid var(--accent);outline-offset:1px}
+.done{margin-top:28px;text-align:center;display:flex;flex-direction:column;gap:14px;align-items:center}
+.done .big{font-family:var(--f-head);font-size:44px;font-weight:700}
+.empty{margin-top:40px;text-align:center;color:var(--soft)}
+@media (max-width:520px){.stem{font-size:18px}.ch{font-size:16px}.mast h1{font-size:24px}.stat b{font-size:20px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div id="home" class="col" aria-live="polite"><p class="muted">กำลังโหลดข้อสอบ…</p></div>
+<div id="quiz" class="col" hidden></div>
+<div id="sheet" class="sheet" hidden></div>
+
+<script>
+(function(){
+const WK={1:'สัปดาห์ที่ 1 · 19–22 ต.ค.',2:'สัปดาห์ที่ 2 · 26–30 ต.ค.',3:'สัปดาห์ที่ 3 · 2–6 พ.ย.',4:'สัปดาห์ที่ 4 · 9–13 พ.ย.',5:'หัวข้อนอกตาราง (คาดว่าสัปดาห์ 5–6)'};
+const KEY='obgyn-quiz-v1';
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let DATA=null, Q={}, P={}, S={rep:false,mcq:false}, sess=null, resetArm=false;
+
+function load(){try{const o=JSON.parse(localStorage.getItem(KEY)||'{}');P=o.p||{};Object.assign(S,o.s||{});}catch(e){}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify({p:P,s:{rep:S.rep,mcq:S.mcq}}))}catch(e){}}
+
+fetch('data.json').then(r=>r.json()).then(d=>{
+  DATA=d;
+  d.L.forEach(l=>l.q.forEach((q,i)=>{q.id=l.c+'-'+i;q.L=l;q.i=i;q.kind=q.o?(q.k&&q.k.length?'mcq':'mcqn'):'open';Q[q.id]=q;}));
+  load();renderHome();
+}).catch(()=>{$('#home').innerHTML='<p class="empty">โหลดข้อสอบไม่สำเร็จ ลองรีเฟรชหน้าอีกครั้ง</p>'});
+
+function pass(q){return (!S.rep||q.n>1)&&(!S.mcq||q.kind!=='open')}
+function lecStat(l){let a=0,c=0,w=0,t=0;l.q.forEach(q=>{if(!pass(q))return;t++;const p=P[q.id];if(p){a++;p.c?c++:w++;}});return{a,c,w,t}}
+
+function renderHome(){
+  const all=Object.values(Q);
+  const done=all.filter(q=>P[q.id]),right=done.filter(q=>P[q.id].c),wrong=all.filter(q=>P[q.id]&&!P[q.id].c&&pass(q));
+  const pct=done.length?Math.round(right.length/done.length*100):0;
+  let h=`<div class="mast"><div><h1>คลังข้อสอบ OB-GYN</h1><div class="sub">ข้อสอบเก่าแยกตาม lecture · ${all.length} ข้อ · ${DATA.L.length} หัวข้อ</div></div></div>
+  <div class="stat num"><div><b>${done.length}</b><span>ทำแล้ว จาก ${all.length}</span></div><div><b>${pct}%</b><span>ตอบถูก (${right.length} ข้อ)</span></div><div><b>${done.length-right.length}</b><span>ข้อที่ผิด รอทบทวน</span></div></div>
+  <div class="quick">
+   <button class="btn pri" id="bRand">สุ่ม 20 ข้อ</button>
+   <button class="btn" id="bWrong" ${wrong.length?'':'disabled'}>ทบทวนข้อที่ผิด <span class="c num">${wrong.length}</span></button>
+   <button class="btn" id="bNew">ข้อที่ยังไม่ได้ทำ</button>
+  </div>
+  <div class="opts">
+   <button class="sw" id="tRep" aria-pressed="${S.rep}">เฉพาะข้อที่ออกซ้ำ</button>
+   <button class="sw" id="tMcq" aria-pressed="${S.mcq}">เฉพาะข้อที่มีตัวเลือก</button>
+  </div>
+  <form class="search" id="fs"><input type="search" id="qs" placeholder="ค้นหา เช่น placenta previa, MgSO4, Pap" autocomplete="off"><button class="btn" type="submit">ทำข้อที่ค้นเจอ</button></form>`;
+  let cur=0;
+  DATA.L.forEach((l,li)=>{
+    const s=lecStat(l); if(!s.t) return;
+    if(l.w!==cur){if(cur)h+='</div>';cur=l.w;h+=`<div class="wk">${WK[l.w]||''}</div><div class="lecs">`;}
+    const cl=l.c[0]==='O'?'':l.c[0]==='G'?'g':'x';
+    h+=`<button class="lec ${cl}" data-l="${li}"><span class="bar"></span><span class="t"><b>${esc(l.t)}</b><small>${[l.d,l.tc||l.ty].filter(Boolean).map(esc).join(' · ')}</small></span>
+    <span class="p num"><b>${s.a}/${s.t}</b>${s.a?`ถูก ${s.c}`:'ยังไม่ทำ'}</span>
+    <span class="meter"><i class="mo" style="width:${s.c/s.t*100}%"></i><i class="mb" style="width:${s.w/s.t*100}%"></i></span></button>`;
+  });
+  if(cur)h+='</div>';
+  h+=`<div class="foot"><p>เฉลยมาจากที่วง ไฮไลต์ หรือจดโน้ตไว้ในไฟล์ข้อสอบเก่า ไม่ใช่เฉลยทางการ ถ้าแต่ละไฟล์ตอบไม่ตรงกัน แอปจะนับถูกทุกคำตอบที่มีไฟล์เลือก และแสดงโน้ตของทุกไฟล์ให้อ่านประกอบ ข้อที่ไม่มีตัวเลือกให้นึกคำตอบก่อน แล้วกดดูเฉลยและให้คะแนนตัวเอง</p>
+  <details><summary>รายชื่อไฟล์ต้นทาง</summary><ul>${Object.entries(DATA.SRC).map(([k,v])=>`<li><b>${k}</b> ${esc(v)}</li>`).join('')}</ul></details>
+  <div class="confirm" id="rs"><button class="linkbtn" id="bReset">ล้างประวัติการทำข้อสอบทั้งหมด</button></div>
+  <p>ประวัติการทำข้อสอบเก็บไว้ในเบราว์เซอร์ของเครื่องนี้เท่านั้น</p></div>`;
+  $('#home').innerHTML=h;
+  $('#bRand').onclick=()=>start(shuffle(all.filter(pass)).slice(0,20),'สุ่ม 20 ข้อ');
+  $('#bWrong').onclick=()=>start(wrong,'ทบทวนข้อที่ผิด');
+  $('#bNew').onclick=()=>start(all.filter(q=>pass(q)&&!P[q.id]),'ข้อที่ยังไม่ได้ทำ');
+  $('#tRep').onclick=()=>{S.rep=!S.rep;save();renderHome()};
+  $('#tMcq').onclick=()=>{S.mcq=!S.mcq;save();renderHome()};
+  $('#fs').onsubmit=e=>{e.preventDefault();const t=$('#qs').value.trim().toLowerCase();if(!t)return;
+    const r=all.filter(q=>pass(q)&&(q.s+' '+(q.o||[]).map(o=>o[1]).join(' ')+' '+(q.raw||[]).join(' ')+' '+q.a.map(a=>a[0]).join(' ')).toLowerCase().includes(t));
+    start(r,'ค้นหา “'+t+'”');};
+  $('#bReset').onclick=()=>{$('#rs').innerHTML='<span>ล้างประวัติทั้งหมดจริงไหม</span><button class="btn" id="rsY">ล้างเลย</button><button class="btn" id="rsN">ยกเลิก</button>';
+    $('#rsY').onclick=()=>{P={};save();renderHome()};$('#rsN').onclick=renderHome;};
+  document.querySelectorAll('.lec').forEach(b=>b.onclick=()=>{const l=DATA.L[+b.dataset.l];start(l.q.filter(pass),l.t)});
+}
+
+function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.random()*(i+1)|0;[a[i],a[j]]=[a[j],a[i]]}return a}
+
+function start(list,name){
+  if(!list.length){sess={list:[],name,i:0,res:{}};}
+  else sess={list:list.map(q=>q.id),name,i:0,res:{}};
+  $('#home').hidden=true;$('#quiz').hidden=false;renderQ();window.scrollTo(0,0);
+}
+function home(){$('#quiz').hidden=true;$('#sheet').hidden=true;$('#home').hidden=false;sess=null;renderHome();window.scrollTo(0,0)}
+
+function record(q,c,k){P[q.id]={c,k,t:Date.now()};sess.res[q.id]={c,k};save()}
+
+function renderQ(){
+  const z=$('#quiz'),n=sess.list.length;
+  const nc=Object.values(sess.res).filter(r=>r.c).length,nw=Object.values(sess.res).filter(r=>!r.c).length;
+  let h=`<div class="qtop"><div class="row"><button class="back" id="bBack">‹ หน้าหลัก</button><span class="nm">${esc(sess.name)}</span><span class="sc num">ถูก <b>${nc}</b> · ผิด <em>${nw}</em></span></div>
+  <div class="prog"><i style="width:${n?Math.min(sess.i+1,n)/n*100:0}%"></i></div></div>`;
+  if(!n){z.innerHTML=h+'<p class="empty">ไม่มีข้อสอบที่ตรงกับเงื่อนไขนี้</p>';$('#bBack').onclick=home;return}
+  if(sess.i>=n){
+    const p=Math.round(nc/Math.max(1,nc+nw)*100);
+    h+=`<div class="done"><div class="muted">จบชุดนี้แล้ว</div><div class="big num">${nc}/${nc+nw}</div><div class="muted">ถูก ${p}% · ข้ามไป ${n-nc-nw} ข้อ</div>
+    <div class="quick" style="justify-content:center">${nw?'<button class="btn pri" id="bRe">ทำข้อที่ผิดอีกรอบ</button>':''}<button class="btn" id="bRev">ย้อนดูข้อแรก</button><button class="btn" id="bHome">กลับหน้าหลัก</button></div></div>`;
+    z.innerHTML=h;$('#bBack').onclick=home;$('#bHome').onclick=home;$('#bRev').onclick=()=>{sess.i=0;renderQ()};
+    if(nw)$('#bRe').onclick=()=>start(sess.list.filter(id=>sess.res[id]&&!sess.res[id].c).map(id=>Q[id]),'ทำข้อที่ผิดอีกรอบ');
+    return;
+  }
+  const q=Q[sess.list[sess.i]],r=sess.res[q.id];
+  const tags=[];
+  if(q.n>1)tags.push(`<span class="tag hot">ออก ${q.n} ชุด</span>`);
+  if(q.r)tags.push('<span class="tag">recall</span>');
+  if(q.kind==='mcq'&&q.k.length>1)tags.push('<span class="tag w">ไฟล์เฉลยไม่ตรงกัน</span>');
+  if(q.kind==='mcqn')tags.push('<span class="tag w">ไฟล์ไม่ได้ระบุคำตอบชัด</span>');
+  h+=`<div class="card"><div class="qno num">ข้อ ${sess.i+1} จาก ${n} · ${esc(q.L.t)} ข้อ ${q.i+1}</div>${tags.length?`<div class="tags">${tags.join('')}</div>`:''}
+  <p class="stem">${esc(q.s)}</p>`;
+  if(q.o){
+    h+='<div class="choices">';
+    const shownO=r||sess.show,pick=r?r.k:sess.pick;
+    q.o.forEach(([d,t,k])=>{
+      let c='',mk='';
+      if(shownO){
+        if(q.kind==='mcq'){
+          if(q.k.includes(k)){c='ok';mk='✓'}else if(pick===k){c='bad';mk='✕'}else c='dim';
+        }else if(pick===k){c='pick';mk='•'}
+      }
+      h+=`<button class="ch ${c}" data-k="${k}" ${shownO?'disabled':''}><span class="k">${esc(d.toUpperCase())}</span><span class="tx">${esc(t)}</span><span class="mk">${mk}</span></button>`;
+    });
+    h+='</div>';
+  }else{
+    if(q.raw)h+=`<div class="raw">${q.raw.map(x=>`<div>${esc(x)}</div>`).join('')}</div>`;
+    if(!r&&!sess.show)h+='<button class="reveal" id="bShow">ลองนึกคำตอบก่อน แล้วแตะเพื่อดูเฉลย</button>';
+  }
+  const shown=r||sess.show;
+  if(shown){
+    if(q.kind==='mcq')h+=r.c?'<div class="verdict ok">✓ ตอบถูก</div>':'<div class="verdict bad">✕ ยังไม่ถูก</div>';
+    else if(q.kind==='mcqn')h+='<div class="verdict n">ไฟล์ไม่ได้ระบุคำตอบชัด อ่านโน้ตแล้วให้คะแนนตัวเอง</div>';
+    h+=`<div class="ans"><h3>เฉลยจากไฟล์</h3>${q.a.length?q.a.map(a=>`<div class="a">${esc(a[0])} <span class="f">${esc(a[1])}</span></div>`).join(''):'<div class="a muted">ไฟล์ไม่ได้ระบุคำตอบ</div>'}
+    <div class="src">ที่มา: ${esc(q.src)}</div></div>`;
+    if(q.kind!=='mcq')h+=`<div class="self"><button class="btn y" id="bY" aria-pressed="${!!(r&&r.c)}">ฉันตอบถูก</button><button class="btn n" id="bN" aria-pressed="${!!(r&&!r.c)}">ฉันตอบผิด</button></div>`;
+  }
+  h+='</div>';
+  z.innerHTML=h+`<div class="nav"><div class="col"><button class="btn" id="bPrev" ${sess.i?'':'disabled'}>‹ ก่อนหน้า</button><button class="btn gridbtn" id="bGrid" aria-label="ดูข้อทั้งหมด">☷ <span class="num">${sess.i+1}/${n}</span></button><button class="btn pri" id="bNext">${sess.i===n-1?'ดูสรุปคะแนน':'ถัดไป ›'}</button></div></div>`;
+  $('#bBack').onclick=home;
+  $('#bPrev').onclick=()=>go(-1);$('#bNext').onclick=()=>go(1);$('#bGrid').onclick=grid;
+  z.querySelectorAll('.ch:not([disabled])').forEach(b=>b.onclick=()=>{
+    const k=b.dataset.k;
+    if(q.kind==='mcq')record(q,q.k.includes(k),k);
+    else{sess.pick=k;sess.show=true;}
+    renderQ();
+  });
+  const bs=$('#bShow');if(bs)bs.onclick=()=>{sess.show=true;renderQ()};
+  const y=$('#bY'),nn=$('#bN');
+  if(y){y.onclick=()=>{record(q,true,sess.pick||null);renderQ()};nn.onclick=()=>{record(q,false,sess.pick||null);renderQ()};}
+}
+function go(d){sess.i=Math.max(0,Math.min(sess.list.length,sess.i+d));sess.show=false;sess.pick=null;renderQ();window.scrollTo(0,0)}
+function grid(){
+  const s=$('#sheet');
+  s.innerHTML=`<div class="in" role="dialog" aria-label="ข้อทั้งหมด"><div class="hd"><h3>ไปยังข้อ</h3><button class="btn" id="gx">ปิด</button></div><div class="dots num">${sess.list.map((id,i)=>{const r=sess.res[id];return`<button data-i="${i}" class="${r?(r.c?'ok':'bad'):''} ${i===sess.i?'cur':''}">${i+1}</button>`}).join('')}</div></div>`;
+  s.hidden=false;
+  s.onclick=e=>{if(e.target===s||e.target.id==='gx'){s.hidden=true;return}const b=e.target.closest('[data-i]');if(b){sess.i=+b.dataset.i;sess.show=false;sess.pick=null;s.hidden=true;renderQ();window.scrollTo(0,0)}};
+}
+// swipe + keyboard
+let sx=null,sy=null;
+document.addEventListener('touchstart',e=>{if(!sess||$('#quiz').hidden)return;sx=e.touches[0].clientX;sy=e.touches[0].clientY},{passive:true});
+document.addEventListener('touchend',e=>{if(sx===null||!sess)return;const dx=e.changedTouches[0].clientX-sx,dy=e.changedTouches[0].clientY-sy;sx=null;
+  if(Math.abs(dx)>80&&Math.abs(dx)>Math.abs(dy)*2&&$('#sheet').hidden){go(dx<0?1:-1)}},{passive:true});
+document.addEventListener('keydown',e=>{if(!sess||$('#quiz').hidden||e.target.tagName==='INPUT')return;
+  if(e.key==='ArrowRight')go(1);else if(e.key==='ArrowLeft')go(-1);
+  else{const m={a:'A',b:'B',c:'C',d:'D',e:'E',1:'A',2:'B',3:'C',4:'D',5:'E'}[e.key.toLowerCase()];if(m){const b=document.querySelector(`.ch[data-k="${m}"]:not([disabled])`);if(b)b.click()}}});
+})();
+</script>
