@@ -59,9 +59,15 @@
       // my reading of one hit, NOT confirmed. This changes what the client
       // receives, not what the server computed.
       // A list: one entry per inbound frame kind that carries a damage number.
-      // The person-hit capture showed a different frame (0x2555, len 34) with no
-      // damage offset identified yet, so only the 0x02ed entry is set.
-      incoming: [{ opcode: 0x02ed, offset: 12, type: 'u32' }],
+      //  - 0x02ed @12: 5053 (monster hit, user capture).
+      //  - 0x2555 @16: person hit, user typed 1459 = 0x05b3 and it sits at frame
+      //    offset 16 in 3 captures (len 34: [0xb33f][0x12716][1459][x][0x17a7][0x100]);
+      //    the field at @20 changes per hit (2903, 4596) and is NOT doubled.
+      // That these are damage reports is my reading of the matches, not confirmed.
+      incoming: [
+        { opcode: 0x02ed, offset: 12, type: 'u32' },
+        { opcode: 0x2555, offset: 16, type: 'u32' },
+      ],
     },
 
     // Skill attack range = 1.5x normal. Client-state field only (gated): window
